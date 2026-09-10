@@ -38,6 +38,11 @@ class PendingReceipt:
     receipt_id: UUID
     vendor_name: str
     vendor_normalized: str
+    receipt_date: date
+    total_amount: Decimal
+    vat_amount: Decimal | None
+    confidence: str
+    image_path: str
 
 
 class ReceiptStore(Protocol):
@@ -157,6 +162,15 @@ class ReceiptPipeline:
         self._store.resolve_category(chat_id, pending.receipt_id, category, pending.vendor_normalized, pending.vendor_name)
         self._store.mark_event(event_id, "COMPLETED")
         await self._notifier.send(chat_id, f"✅ Category saved: *{category}*\n\nFuture receipts from *{pending.vendor_name}* will use this category.")
+        extraction = ReceiptExtraction(
+            Vendor_Name=pending.vendor_name,
+            Date=pending.receipt_date.strftime("%d/%m/%Y"),
+            Total_Amount=pending.total_amount,
+            VAT_Amount=pending.vat_amount,
+            Category=category,
+            Confidence_Score=pending.confidence,
+        )
+        await self._send_summary(chat_id, extraction, category, pending.image_path)
 
     async def _request_retry(self, event_id: UUID, chat_id: int, error_code: str) -> None:
         self._store.mark_event(event_id, "RETRY_REQUESTED", error_code)

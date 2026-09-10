@@ -118,7 +118,16 @@ class SqlAlchemyReceiptStore:
             if row is None:
                 return None
             pending, receipt = row
-            return PendingReceipt(receipt_id=pending.receipt_id, vendor_name=receipt.vendor_name, vendor_normalized=receipt.vendor_normalized)
+            return PendingReceipt(
+                receipt_id=pending.receipt_id,
+                vendor_name=receipt.vendor_name,
+                vendor_normalized=receipt.vendor_normalized,
+                receipt_date=receipt.receipt_date,
+                total_amount=receipt.total_amount,
+                vat_amount=receipt.vat_amount,
+                confidence=receipt.confidence,
+                image_path=receipt.image_path,
+            )
 
     def resolve_category(self, chat_id: int, receipt_id: UUID, category: str, normalized_vendor: str, display_vendor: str) -> None:
         with self._session_factory() as session:
