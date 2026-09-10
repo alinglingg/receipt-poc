@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -56,12 +57,14 @@ class ReceiptExtraction(BaseModel):
 
 
 VISION_INSTRUCTIONS = """Extract data from this receipt image.
-Return only the requested structured output. Do not invent a value that cannot
-be read. Use Confidence_Score Low whenever the receipt is blurry, damaged,
-unreadable, missing a required field, or the total/date/vendor is uncertain.
-Date must be DD/MM/YYYY. Total_Amount and VAT_Amount must be plain numeric
-amounts without currency symbols. VAT_Amount is null when no VAT is shown.
-Category should be the most likely expense category based only on the receipt.
+Return only one JSON object with exactly these keys:
+Vendor_Name, Date, Total_Amount, VAT_Amount, Category, Confidence_Score.
+Do not invent a value that cannot be read. Use Confidence_Score Low whenever
+the receipt is blurry, damaged, unreadable, missing a required field, or the
+total/date/vendor is uncertain. Date must be DD/MM/YYYY. Total_Amount and
+VAT_Amount must be plain numeric amounts without currency symbols. VAT_Amount
+is null when no VAT is shown. Category should be the most likely expense
+category based only on the receipt.
 """
 
 
@@ -76,7 +79,7 @@ class OpenAIVisionExtractor:
 
         image_data_url = "data:image/jpeg;base64," + base64.b64encode(jpeg_bytes).decode("ascii")
         try:
-            response = await self._client.responses.parse(
+            response = await self._client.responses.create(
                 model=self._model,
                 instructions=VISION_INSTRUCTIONS,
                 input=[
@@ -88,20 +91,31 @@ class OpenAIVisionExtractor:
                         ],
                     }
                 ],
-                text_format=ReceiptExtraction,
+                max_output_tokens=400,
             )
-            parsed = response.output_parsed
+            parsed = parse_vision_json(response.output_text)
         except Exception as exc:  # Pipeline classifies transient provider errors separately.
             raise VisionExtractionError("Vision extraction request failed.") from exc
-
-        if parsed is None:
-            raise VisionExtractionError("Vision extraction returned no structured result.")
-        if not isinstance(parsed, ReceiptExtraction):
-            try:
-                parsed = ReceiptExtraction.model_validate(parsed)
-            except ValidationError as exc:
-                raise VisionExtractionError("Vision extraction returned an invalid schema.") from exc
         return parsed
+
+
+def parse_vision_json(output_text: str) -> ReceiptExtraction:
+    """Validate the model's JSON before it can enter the receipt workflow."""
+    try:
+        clean_output = output_text.strip()
+        if clean_output.startswith("```"):
+            clean_output = clean_output.split("\n", 1)[1] if "\n" in clean_output else ""
+            if clean_output.rstrip().endswith("```"):
+                clean_output = clean_output.rstrip()[:-3].rstrip()
+        payload = json.loads(clean_output)
+        if not isinstance(payload, dict):
+            raise ValueError("Expected a JSON object.")
+        # A defensive compatibility normalizer for models that shorten the key.
+        if "Vendor_Name" not in payload and "Vendor" in payload:
+            payload["Vendor_Name"] = payload.pop("Vendor")
+        return ReceiptExtraction.model_validate(payload)
+    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+        raise VisionExtractionError("Vision extraction returned an invalid schema.") from exc
 
 
 def is_usable_extraction(extraction: ReceiptExtraction) -> bool:
