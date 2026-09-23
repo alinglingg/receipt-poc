@@ -30,13 +30,16 @@ class FakeStore:
         self.drafts: list[ReceiptDraft] = []
         self.pending: PendingReceipt | None = None
 
+    def get_or_create_user(self, chat_id: int) -> UUID:
+        return UUID(int=chat_id)
+
     def mark_event(self, event_id: UUID, status: str, error_code: str | None = None) -> None:
         self.events.append((str(event_id), status, error_code))
 
     def record_attempt(self, *args: object, **kwargs: object) -> None:
         pass
 
-    def find_vendor_category(self, normalized_vendor: str) -> str | None:
+    def find_vendor_category(self, user_id: UUID, normalized_vendor: str) -> str | None:
         return self.category
 
     def is_duplicate(self, *args: object) -> bool:
@@ -48,6 +51,7 @@ class FakeStore:
         if draft.status == "PENDING_CATEGORY":
             self.pending = PendingReceipt(
                 receipt_id=receipt_id,
+                user_id=draft.user_id,
                 vendor_name=draft.vendor_name,
                 vendor_normalized=draft.vendor_normalized,
                 receipt_date=draft.receipt_date,
@@ -58,13 +62,13 @@ class FakeStore:
             )
         return receipt_id
 
-    def create_pending_conversation(self, chat_id: int, receipt_id: UUID) -> None:
+    def create_pending_conversation(self, user_id: UUID, receipt_id: UUID) -> None:
         pass
 
-    def get_open_pending(self, chat_id: int) -> PendingReceipt | None:
+    def get_open_pending(self, user_id: UUID) -> PendingReceipt | None:
         return self.pending
 
-    def resolve_category(self, chat_id: int, receipt_id: UUID, category: str, normalized_vendor: str, display_vendor: str) -> None:
+    def resolve_category(self, user_id: UUID, receipt_id: UUID, category: str) -> None:
         self.category = category
         self.pending = None
 

@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, create_engine, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric, String, Text, UniqueConstraint, create_engine, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 from app.config import get_settings
@@ -18,6 +18,15 @@ RECEIPT_STATUSES = ("PENDING_CATEGORY", "COMPLETED")
 
 class Base(DeclarativeBase):
     pass
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("id", "telegram_chat_id", name="users_id_chat_key"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class WebhookEvent(Base):
@@ -46,11 +55,15 @@ class Receipt(Base):
     __table_args__ = (
         UniqueConstraint("event_id", name="receipts_event_id_key"),
         UniqueConstraint("chat_id", "vendor_normalized", "receipt_date", "total_amount", name="receipts_exact_duplicate_key"),
+        UniqueConstraint("user_id", "vendor_normalized", "receipt_date", "total_amount", name="receipts_user_exact_duplicate_key"),
+        UniqueConstraint("id", "user_id", name="receipts_id_user_key"),
+        ForeignKeyConstraint(["user_id", "chat_id"], ["users.id", "users.telegram_chat_id"], name="receipts_user_chat_fkey"),
         CheckConstraint(f"status IN {RECEIPT_STATUSES}", name="receipts_valid_status"),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     event_id: Mapped[UUID] = mapped_column(ForeignKey("webhook_events.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     vendor_name: Mapped[str] = mapped_column(Text, nullable=False)
     vendor_normalized: Mapped[str] = mapped_column(Text, nullable=False)
@@ -65,10 +78,15 @@ class Receipt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     event: Mapped[WebhookEvent] = relationship(back_populates="receipt")
-    pending_conversation: Mapped[PendingConversation | None] = relationship(back_populates="receipt", uselist=False)
+    pending_conversation: Mapped[PendingConversation | None] = relationship(
+        back_populates="receipt", uselist=False,
+        primaryjoin="Receipt.id == PendingConversation.receipt_id",
+        foreign_keys="PendingConversation.receipt_id",
+    )
 
 
 class VendorMemory(Base):
+    """Legacy global memory, retained for migration history only."""
     __tablename__ = "vendor_memory"
 
     normalized_name: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -78,18 +96,42 @@ class VendorMemory(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class UserVendorMemory(Base):
+    __tablename__ = "user_vendor_memory"
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    normalized_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class PendingConversation(Base):
     __tablename__ = "pending_conversations"
-    __table_args__ = (CheckConstraint("status IN ('OPEN', 'RESOLVED')", name="pending_conversations_valid_status"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('OPEN', 'RESOLVED')", name="pending_conversations_valid_status"),
+        ForeignKeyConstraint(["user_id", "chat_id"], ["users.id", "users.telegram_chat_id"], name="pending_conversations_user_chat_fkey"),
+        ForeignKeyConstraint(["receipt_id", "user_id"], ["receipts.id", "receipts.user_id"], name="pending_conversations_receipt_user_fkey"),
+        Index("pending_conversations_one_open_per_chat", "chat_id", unique=True,
+              postgresql_where=text("status = 'OPEN'"), sqlite_where=text("status = 'OPEN'")),
+        Index("pending_conversations_one_open_per_user", "user_id", unique=True,
+              postgresql_where=text("status = 'OPEN'"), sqlite_where=text("status = 'OPEN'")),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     receipt_id: Mapped[UUID] = mapped_column(ForeignKey("receipts.id", ondelete="CASCADE"), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="OPEN")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    receipt: Mapped[Receipt] = relationship(back_populates="pending_conversation")
+    receipt: Mapped[Receipt] = relationship(
+        back_populates="pending_conversation",
+        primaryjoin="Receipt.id == PendingConversation.receipt_id",
+        foreign_keys=[receipt_id],
+    )
 
 
 class ProcessingAttempt(Base):

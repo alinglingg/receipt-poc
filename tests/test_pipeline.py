@@ -45,6 +45,9 @@ class FakeStore:
         self.drafts: list[ReceiptDraft] = []
         self.pending: PendingReceipt | None = None
 
+    def get_or_create_user(self, chat_id: int) -> UUID:
+        return UUID(int=chat_id)
+
     def mark_event(
         self,
         event_id: UUID,
@@ -58,6 +61,7 @@ class FakeStore:
 
     def find_vendor_category(
         self,
+        user_id: UUID,
         normalized_vendor: str,
     ) -> str | None:
         return self.category
@@ -72,6 +76,7 @@ class FakeStore:
         if draft.status == "PENDING_CATEGORY":
             self.pending = PendingReceipt(
                 receipt_id=receipt_id,
+                user_id=draft.user_id,
                 vendor_name=draft.vendor_name,
                 vendor_normalized=draft.vendor_normalized,
                 receipt_date=draft.receipt_date,
@@ -85,24 +90,22 @@ class FakeStore:
 
     def create_pending_conversation(
         self,
-        chat_id: int,
+        user_id: UUID,
         receipt_id: UUID,
     ) -> None:
         pass
 
     def get_open_pending(
         self,
-        chat_id: int,
+        user_id: UUID,
     ) -> PendingReceipt | None:
         return self.pending
 
     def resolve_category(
         self,
-        chat_id: int,
+        user_id: UUID,
         receipt_id: UUID,
         category: str,
-        normalized_vendor: str,
-        display_vendor: str,
     ) -> None:
         self.category = category
         self.pending = None
@@ -150,7 +153,7 @@ class FakeNotifier:
 
 
 @pytest.mark.asyncio
-async def test_unknown_vendor_pauses_then_resumes_on_category_reply() -> None:
+async def test_unknown_vendor_category_reply_returns_summary() -> None:
     store = FakeStore(category=None)
     notifier = FakeNotifier()
 
@@ -263,3 +266,55 @@ async def test_low_confidence_requests_a_clearer_image() -> None:
 
 def test_vendor_normalization_removes_case_spaces_and_punctuation() -> None:
     assert normalize_vendor("Acme, Supplies Ltd.") == "ACMESUPPLIESLTD"
+
+
+@pytest.mark.asyncio
+async def test_two_chats_learn_independently_through_the_pipeline(store, session_factory):
+    from sqlalchemy import select
+    from app.db import Receipt
+
+    notifier = FakeNotifier()
+    vision = FakeVision(extraction())
+    pipeline = ReceiptPipeline(store=store, vision=vision, storage=FakeStorage(), notifier=notifier)
+
+    async def photo(chat_id, update_id):
+        event = store.create_webhook_event(update_id=update_id, chat_id=chat_id, kind="photo")
+        await pipeline.process_photo(event_id=event.id, chat_id=chat_id, image_bytes=image_bytes())
+
+    async def reply(chat_id, update_id, category):
+        event = store.create_webhook_event(update_id=update_id, chat_id=chat_id, kind="text", text=category)
+        await pipeline.process_category_reply(event_id=event.id, chat_id=chat_id, category=category)
+
+    await photo(42, 500)
+    await photo(43, 501)  # Identical receipt, different owner: both are accepted.
+    user_a, user_b = store.get_or_create_user(42), store.get_or_create_user(43)
+    pending_a, pending_b = store.get_open_pending(user_a), store.get_open_pending(user_b)
+    assert pending_a is not None and pending_b is not None
+
+    await reply(44, 502, "Unrelated category")
+    assert store.get_open_pending(user_a) == pending_a
+    assert store.get_open_pending(user_b) == pending_b
+
+    await reply(42, 503, "Meals")
+    await reply(43, 504, "Client Entertainment")
+    assert store.find_vendor_category(user_a, "ACMESUPPLIES") == "Meals"
+    assert store.find_vendor_category(user_b, "ACMESUPPLIES") == "Client Entertainment"
+
+    # Later receipts use the respective owner's memory without another question.
+    vision.result = ReceiptExtraction(
+        Vendor_Name="Acme Supplies", Date="11/09/2026", Total_Amount="130.00",
+        VAT_Amount="15.50", Category="Model suggestion", Confidence_Score="High",
+    )
+    await photo(42, 505)
+    assert "*Category:* Meals" in notifier.messages[-1]
+    await photo(43, 506)
+    assert "*Category:* Client Entertainment" in notifier.messages[-1]
+    await photo(42, 507)
+    assert "Duplicate" in notifier.messages[-1]
+
+    with session_factory() as session:
+        receipts = list(session.scalars(select(Receipt)))
+        assert len(receipts) == 4
+        assert all(r.status == "COMPLETED" for r in receipts)
+        assert all(r.user_id == {42: user_a, 43: user_b}[r.chat_id] for r in receipts)
+        assert all(r.image_path.startswith(f"{r.chat_id}/") for r in receipts)
