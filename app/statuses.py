@@ -4,6 +4,7 @@ from enum import StrEnum
 
 class EventStatus(StrEnum):
     RECEIVED = "RECEIVED"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
     PROCESSING = "PROCESSING"
     PENDING_CATEGORY = "PENDING_CATEGORY"
     COMPLETED = "COMPLETED"

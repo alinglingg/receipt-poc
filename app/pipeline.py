@@ -11,7 +11,12 @@ from uuid import UUID
 from app.imaging import InvalidReceiptImage, prepare_receipt_image
 from app.storage import StorageError
 from app.statuses import EventStatus, ReceiptStatus
+from app.review import review_reasons, parse_confirmation, escape_markdown, REASON_LABELS, DATE_REASONS
 from app.vision import ReceiptExtraction, VisionExtractionError, is_usable_extraction
+
+
+class PendingReceiptError(RuntimeError):
+    """A user must finish the existing receipt conversation first."""
 
 
 class DuplicateReceiptError(RuntimeError):
@@ -33,6 +38,7 @@ class ReceiptDraft:
     status: str
     image_path: str
     image_sha256: str
+    raw_date_text: str | None = None
     review_reason: str | None = None
     failure_reason: str | None = None
 
@@ -48,6 +54,10 @@ class PendingReceipt:
     vat_amount: Decimal | None
     confidence: str
     image_path: str
+    category: str | None = None
+    status: str = ReceiptStatus.PENDING_CATEGORY
+    review_reason: str | None = None
+    raw_date_text: str | None = None
 
 
 class ReceiptStore(Protocol):
@@ -61,6 +71,8 @@ class ReceiptStore(Protocol):
     def create_pending_conversation(self, user_id: UUID, receipt_id: UUID) -> None: ...
     def get_open_pending(self, user_id: UUID) -> PendingReceipt | None: ...
     def resolve_category(self, user_id: UUID, receipt_id: UUID, category: str) -> None: ...
+    def confirm_review(self, user_id: UUID, receipt_id: UUID, date_override: date | None = None) -> PendingReceipt: ...
+    def retry_review(self, user_id: UUID, receipt_id: UUID) -> None: ...
 
 
 class ReceiptNotifier(Protocol):
@@ -102,6 +114,12 @@ class ReceiptPipeline:
             await self._notifier.send(chat_id, "⚠️ *Duplicate receipt detected*\n\nThis image is already saved. No new entry was created.")
             return
 
+        pending = self._store.get_open_pending(user_id)
+        if pending is not None:
+            self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, "PENDING_RECEIPT")
+            await self._send_pending_prompt(chat_id, pending)
+            return
+
         try:
             extraction = await self._vision.extract(prepared.content)
             self._store.record_attempt(event_id, "vision", True)
@@ -115,12 +133,18 @@ class ReceiptPipeline:
             return
 
         vendor_normalized = normalize_vendor(extraction.vendor_name)
+        if not vendor_normalized:
+            await self._request_retry(event_id, chat_id, "INVALID_VENDOR")
+            return
         if self._store.is_duplicate(user_id, vendor_normalized, extraction.receipt_date, extraction.total_amount):
             self._store.mark_event(event_id, EventStatus.DUPLICATE)
             await self._notifier.send(chat_id, "⚠️ *Duplicate receipt detected*\n\nI found the same vendor, date, and total already recorded. No new entry was created.")
             return
 
         category = self._store.find_vendor_category(user_id, vendor_normalized)
+        reasons = review_reasons(extraction)
+        receipt_status = (ReceiptStatus.NEEDS_REVIEW if reasons else
+                          ReceiptStatus.COMPLETED if category else ReceiptStatus.PENDING_CATEGORY)
         try:
             image_path = await self._storage.upload_receipt(
                 object_path=f"{chat_id}/{event_id}.jpg", content=prepared.content
@@ -137,7 +161,9 @@ class ReceiptPipeline:
                     vat_amount=extraction.vat_amount,
                     category=category,
                     confidence=extraction.confidence_score.value,
-                    status=ReceiptStatus.COMPLETED if category else ReceiptStatus.PENDING_CATEGORY,
+                    status=receipt_status,
+                    review_reason=",".join(reasons) or None,
+                    raw_date_text=extraction.raw_date_text,
                     image_path=image_path,
                     image_sha256=prepared.sha256,
                 )
@@ -147,18 +173,31 @@ class ReceiptPipeline:
             self._store.mark_event(event_id, EventStatus.DUPLICATE)
             await self._notifier.send(chat_id, "⚠️ *Duplicate receipt detected*\n\nNo new entry was created.")
             return
+        except PendingReceiptError:
+            self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, "PENDING_RECEIPT")
+            pending = self._store.get_open_pending(user_id)
+            if pending is not None:
+                await self._send_pending_prompt(chat_id, pending)
+            else:
+                await self._notifier.send(chat_id, "The earlier receipt was just resolved. Please resend this photo.")
+            return
         except StorageError:
             self._store.record_attempt(event_id, "storage_and_save", False, "STORAGE_ERROR")
             await self._request_retry(event_id, chat_id, "STORAGE_ERROR")
             return
 
-        if category is None:
-            self._store.create_pending_conversation(user_id, receipt_id)
-            self._store.mark_event(event_id, EventStatus.PENDING_CATEGORY)
-            await self._notifier.send(chat_id, f"❓ *Unrecognized vendor:* {extraction.vendor_name}\n\nWhich expense category should I assign this to?")
+        # The receipt, event status and pending conversation were committed together.
+        # Do not overwrite a status that another worker may already have resolved.
+        if reasons or category is None:
+            pending = self._store.get_open_pending(user_id)
+            if pending is None or pending.receipt_id != receipt_id:
+                return
+            if reasons:
+                await self._send_pending_prompt(chat_id, pending)
+            else:
+                await self._notifier.send(chat_id, f"❓ *Unrecognized vendor:* {escape_markdown(extraction.vendor_name)}\n\nWhich expense category should I assign this to?")
             return
 
-        self._store.mark_event(event_id, EventStatus.COMPLETED)
         await self._send_summary(chat_id, extraction, category, image_path)
 
     async def process_category_reply(self, *, event_id: UUID, chat_id: int, category: str) -> None:
@@ -169,14 +208,26 @@ class ReceiptPipeline:
             self._store.mark_event(event_id, EventStatus.COMPLETED)
             await self._notifier.send(chat_id, "Send me a receipt image first, then I can record its category.")
             return
+        if pending.status == ReceiptStatus.NEEDS_REVIEW:
+            await self._process_review_reply(event_id, chat_id, pending, category)
+            return
+        if category.upper().split(" ", 1)[0] in {"CONFIRM", "REVIEW", "RETRY"}:
+            self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, "CATEGORY_REQUIRED")
+            await self._send_pending_prompt(chat_id, pending)
+            return
         if not category or len(category) > 100:
             self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, "INVALID_CATEGORY")
             await self._notifier.send(chat_id, "Please reply with a short expense category, for example `Food Supplies`.")
             return
 
-        self._store.resolve_category(user_id, pending.receipt_id, category)
+        try:
+            self._store.resolve_category(user_id, pending.receipt_id, category)
+        except LookupError:
+            self._store.mark_event(event_id, EventStatus.COMPLETED)
+            await self._notifier.send(chat_id, "That category request has already changed. Please check the latest bot message.")
+            return
         self._store.mark_event(event_id, EventStatus.COMPLETED)
-        await self._notifier.send(chat_id, f"✅ Category saved: *{category}*\n\nFuture receipts from *{pending.vendor_name}* will use this category.")
+        await self._notifier.send(chat_id, f"✅ Category saved: *{escape_markdown(category)}*\n\nFuture receipts from *{escape_markdown(pending.vendor_name)}* will use this category.")
         extraction = ReceiptExtraction(
             Vendor_Name=pending.vendor_name,
             Date=pending.receipt_date.strftime("%d/%m/%Y"),
@@ -186,6 +237,61 @@ class ReceiptPipeline:
             Confidence_Score=pending.confidence,
         )
         await self._send_summary(chat_id, extraction, category, pending.image_path)
+
+    async def _send_pending_prompt(self, chat_id: int, pending: PendingReceipt) -> None:
+        vendor = escape_markdown(pending.vendor_name)
+        if pending.status != ReceiptStatus.NEEDS_REVIEW:
+            await self._notifier.send(chat_id, f"Please finish the category for *{vendor}* before sending another receipt. Reply with an expense category.")
+            return
+        reasons = (pending.review_reason or '').split(',')
+        reason_text = '\n'.join(REASON_LABELS.get(reason, 'Please check the extracted values.') for reason in reasons)
+        vat = f'{pending.vat_amount:.2f}' if pending.vat_amount is not None else 'Not shown'
+        category = escape_markdown(pending.category) if pending.category else 'Not assigned (asked after confirmation)'
+        date_help = ('The date needs clarification. Reply `CONFIRM YYYY-MM-DD` with the correct date.'
+                     if set(reasons).intersection(DATE_REASONS) else
+                     'Reply `CONFIRM` if everything is correct, or `CONFIRM YYYY-MM-DD` to confirm with a corrected date.')
+        signed_url = await self._storage.create_signed_url(object_path=pending.image_path)
+        await self._notifier.send(chat_id,
+            '⚠️ *Please review this receipt*\n\n'
+            f'*Vendor:* {vendor}\n*Date:* {pending.receipt_date.strftime("%d %B %Y")}\n'
+            f'*Printed date:* {escape_markdown(pending.raw_date_text or "Not available")}\n'
+            f'*Total:* {pending.total_amount:.2f}\n*VAT:* {vat}\n*Category:* {category}\n\n'
+            f'{reason_text}\n\n{date_help}\n'
+            'For example, `CONFIRM 2026-09-10` means 10 September 2026.\n'
+            'If other values are wrong, reply `RETRY` to discard this unconfirmed draft and send a clearer photo.\n\n'
+            f'[View receipt securely]({signed_url}) _(link expires in 15 minutes)_')
+
+    async def _process_review_reply(self, event_id: UUID, chat_id: int, pending: PendingReceipt, message: str) -> None:
+        try:
+            if message.upper() == 'REVIEW':
+                await self._send_pending_prompt(chat_id, pending)
+            elif message.upper() == 'RETRY':
+                self._store.retry_review(pending.user_id, pending.receipt_id)
+                await self._notifier.send(chat_id, 'Unconfirmed draft discarded. Please send a clearer photo of the receipt.')
+            else:
+                override = parse_confirmation(message)
+                confirmed = self._store.confirm_review(pending.user_id, pending.receipt_id, override)
+                if confirmed.status == ReceiptStatus.PENDING_CATEGORY:
+                    await self._notifier.send(chat_id, f'✅ Receipt details confirmed.\n\nWhich expense category should I assign to *{escape_markdown(confirmed.vendor_name)}*?')
+                else:
+                    extraction = ReceiptExtraction(
+                        Vendor_Name=confirmed.vendor_name, Date=confirmed.receipt_date,
+                        Date_Text=confirmed.raw_date_text, Total_Amount=confirmed.total_amount,
+                        VAT_Amount=confirmed.vat_amount, Category=confirmed.category,
+                        Confidence_Score=confirmed.confidence,
+                    )
+                    await self._send_summary(chat_id, extraction, confirmed.category, confirmed.image_path)
+        except ValueError as exc:
+            self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, 'INVALID_CONFIRMATION')
+            await self._notifier.send(chat_id, str(exc))
+            return
+        except DuplicateReceiptError:
+            self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, 'REVIEW_DUPLICATE')
+            await self._notifier.send(chat_id, 'That date matches a receipt already saved for you. This draft remains unconfirmed. Reply RETRY to discard it, or CONFIRM YYYY-MM-DD with the correct date.')
+            return
+        except LookupError:
+            await self._notifier.send(chat_id, 'That review has already changed. Please check the latest bot message.')
+        self._store.mark_event(event_id, EventStatus.COMPLETED)
 
     async def _request_retry(self, event_id: UUID, chat_id: int, error_code: str) -> None:
         self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, error_code)
@@ -197,11 +303,11 @@ class ReceiptPipeline:
         await self._notifier.send(
             chat_id,
             "✅ *Receipt recorded*\n\n"
-            f"*Vendor:* {extraction.vendor_name}\n"
+            f"*Vendor:* {escape_markdown(extraction.vendor_name)}\n"
             f"*Date:* {extraction.receipt_date.strftime('%d/%m/%Y')}\n"
             f"*Total:* {extraction.total_amount:.2f}\n"
             f"*VAT:* {vat}\n"
-            f"*Category:* {category}\n"
+            f"*Category:* {escape_markdown(category)}\n"
             f"*Confidence:* {extraction.confidence_score.value}\n\n"
             f"[View receipt securely]({signed_url}) _(link expires in 15 minutes)_",
         )

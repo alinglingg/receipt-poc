@@ -109,7 +109,7 @@ async def test_notification_failure_preserves_completed_receipt(process_event, s
     notifier.send.side_effect = TelegramError('delivery unavailable')
     telegram = AsyncMock()
     telegram.download_photo.return_value = image_bytes()
-    pipeline = ReceiptPipeline(store=store, vision=FakeVision(extraction().model_copy(update={'receipt_date': datetime(2026,9,11).date()})), storage=FakeStorage(), notifier=notifier)
+    pipeline = ReceiptPipeline(store=store, vision=FakeVision(extraction().model_copy(update={'receipt_date': datetime(2026,9,11).date(), 'raw_date_text': '11 September 2026'})), storage=FakeStorage(), notifier=notifier)
     await process_event(SimpleNamespace(store=store, telegram=telegram, pipeline=pipeline), TelegramUpdate(741,42,'photo','test'), event.id)
     with session_factory() as session:
         receipt = session.scalar(select(Receipt).where(Receipt.event_id == event.id))

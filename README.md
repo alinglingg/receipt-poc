@@ -184,3 +184,60 @@ a repeat attempt fails and rolls back. On failure, inspect the error before retr
 Smoke check with a new receipt, category reply, repeated image, and unreadable
 photo. Check receipt/event statuses and timestamps in Supabase. No new Telegram
 commands are expected in this phase.
+
+## Phase 4: human review
+
+High-confidence extractions with no validation concerns follow the usual category
+and completion path. Medium confidence saves a `NEEDS_REVIEW` draft. Low confidence
+and invalid required fields request a clearer photo without saving an expense.
+
+The extractor now also returns `Date_Text`, the printed date substring before
+normalization. Deterministic checks flag ambiguous numeric dates (both day/month
+orders are possible), missing/unverifiable date evidence, future dates, and VAT
+above the total, even when confidence is High. Future dates use the current date
+in UTC+08:00 (Manila). Unknown date formats require an explicit date rather than
+silently choosing an interpretation. These checks still depend on the model
+reading the printed characters correctly; High confidence is not a guarantee.
+
+During review, Telegram displays vendor, date with a month name, printed date,
+total, VAT, category, reasons and a private signed image link. Commands are:
+
+- `CONFIRM`: accept the displayed values when the date is unambiguous.
+- `CONFIRM YYYY-MM-DD`: explicitly choose/correct the date and confirm the other
+  displayed values. For Keigo's `9/10/26`, use `CONFIRM 2026-09-10`.
+- `REVIEW`: display the pending review again (also works after a restart).
+- `RETRY`: explicitly discard only the caller's unconfirmed review draft, then
+  send a clearer photo. This cannot delete a completed receipt. The original
+  webhook/attempt history and private uploaded image remain; orphan-image cleanup
+  is not part of this phase.
+
+Ambiguous/unverified/future dates require the explicit ISO-date command. A future
+confirmed date or VAT above total cannot be accepted. Other field corrections
+remain Phase 5; use RETRY when those fields are wrong. Any corrected date is checked
+against the existing per-user duplicate rule in the same transaction.
+
+For unknown vendors, review happens before the category question. Category memory
+is learned only after confirmation and category assignment. Review commands cannot
+be mistaken for category names. One open category/review conversation per user is
+preserved; new photos wait until it is resolved, and repeated images still get
+normal duplicate detection. Receipt, pending conversation, and event status are
+saved together. Concurrent saves/confirmations lock the owner row in PostgreSQL.
+
+### Phase 4 deployment order
+
+Validate against a disposable PostgreSQL `receipt_poc_test` database first. Then
+back up the live database and pause receipt processing. Apply
+`migrations/004_receipt_review.sql` **once**, after migration 003. On an existing
+project, do not rerun migrations 001, 002, or 003. Migration 004 adds nullable
+`receipts.raw_date_text` and expands the webhook status check; it preserves all
+existing receipts, categories, pending conversations, and duplicate constraints.
+Historical date text remains NULL; old receipts are not reprocessed or reclassified.
+The migration takes table locks (5-second lock/60-second statement timeouts) and
+rolls back on error. Deploy this backend only after the migration succeeds.
+
+Smoke-test a readable ambiguous-date receipt: it must pause for an explicit date,
+then request a category only if the vendor is unknown. Verify `NEEDS_REVIEW` has no
+completion timestamp, confirmation completes or changes to `PENDING_CATEGORY`, and
+category assignment completes the receipt. Check a duplicate image and low-confidence
+image too. Automated tests use fake Vision/Telegram/Storage clients; no live API
+calls are made. PostgreSQL migration and concurrency tests require TEST_DATABASE_URL.

@@ -20,6 +20,7 @@ def extraction(
     return ReceiptExtraction(
         Vendor_Name="Acme Supplies",
         Date="10/09/2026",
+        Date_Text="10 September 2026",
         Total_Amount="125.50",
         VAT_Amount="15.50",
         Category="Maintenance",
@@ -71,7 +72,7 @@ class FakeStore:
         self.drafts.append(draft)
         receipt_id = uuid4()
 
-        if draft.status == "PENDING_CATEGORY":
+        if draft.status in ("PENDING_CATEGORY", "NEEDS_REVIEW"):
             self.pending = PendingReceipt(
                 receipt_id=receipt_id,
                 user_id=draft.user_id,
@@ -82,8 +83,13 @@ class FakeStore:
                 vat_amount=draft.vat_amount,
                 confidence=draft.confidence,
                 image_path=draft.image_path,
+                category=draft.category,
+                status=draft.status,
+                review_reason=draft.review_reason,
+                raw_date_text=draft.raw_date_text,
             )
 
+        self.mark_event(draft.event_id, draft.status)
         return receipt_id
 
     def create_pending_conversation(

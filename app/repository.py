@@ -12,7 +12,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import PendingConversation, ProcessingAttempt, Receipt, User, UserVendorMemory, WebhookEvent
-from app.pipeline import DuplicateReceiptError, PendingReceipt, ReceiptDraft
+from app.pipeline import DuplicateReceiptError, PendingReceiptError, PendingReceipt, ReceiptDraft
+from app.review import validate_confirmation
 from app.statuses import EventStatus, ReceiptStatus, PendingStatus, EVENT_TERMINAL_STATUSES
 
 
@@ -140,6 +141,11 @@ class SqlAlchemyReceiptStore:
                 Receipt.image_sha256 == draft.image_sha256,
             ).limit(1)) is not None:
                 raise DuplicateReceiptError("This receipt image is already saved.")
+            if session.scalar(select(PendingConversation.id).where(
+                PendingConversation.user_id == draft.user_id,
+                PendingConversation.status == PendingStatus.OPEN,
+            )) is not None:
+                raise PendingReceiptError("Finish the current receipt first.")
             saved_at = datetime.now(timezone.utc)
             receipt = Receipt(
                 event_id=draft.event_id,
@@ -155,6 +161,7 @@ class SqlAlchemyReceiptStore:
                 status=draft.status,
                 image_path=draft.image_path,
                 image_sha256=draft.image_sha256,
+                raw_date_text=draft.raw_date_text,
                 review_reason=draft.review_reason,
                 failure_reason=draft.failure_reason,
                 processing_started_at=event.processing_started_at,
@@ -163,6 +170,11 @@ class SqlAlchemyReceiptStore:
             )
             session.add(receipt)
             try:
+                session.flush()
+                if draft.status in (ReceiptStatus.PENDING_CATEGORY, ReceiptStatus.NEEDS_REVIEW):
+                    session.add(PendingConversation(user_id=draft.user_id, chat_id=draft.chat_id, receipt_id=receipt.id))
+                if draft.status in (ReceiptStatus.PENDING_CATEGORY, ReceiptStatus.NEEDS_REVIEW, ReceiptStatus.COMPLETED):
+                    _set_event_status(event, draft.status)
                 session.commit()
             except IntegrityError as exc:
                 session.rollback()
@@ -185,6 +197,10 @@ class SqlAlchemyReceiptStore:
             receipt = session.scalar(select(Receipt).where(Receipt.id == receipt_id, Receipt.user_id == user_id))
             if receipt is None:
                 raise LookupError("Receipt was not found for this user.")
+            # Receipt creation now attaches its pending conversation atomically.
+            # Keep this legacy entry point idempotent for existing callers.
+            if session.scalar(select(PendingConversation.id).where(PendingConversation.receipt_id == receipt_id)) is not None:
+                return
             session.add(PendingConversation(user_id=user_id, chat_id=receipt.chat_id, receipt_id=receipt_id))
             session.commit()
 
@@ -209,6 +225,10 @@ class SqlAlchemyReceiptStore:
                 vat_amount=receipt.vat_amount,
                 confidence=receipt.confidence,
                 image_path=receipt.image_path,
+                category=receipt.category,
+                status=receipt.status,
+                review_reason=receipt.review_reason,
+                raw_date_text=receipt.raw_date_text,
             )
 
     def resolve_category(self, user_id: UUID, receipt_id: UUID, category: str) -> None:
@@ -229,6 +249,8 @@ class SqlAlchemyReceiptStore:
             receipt = session.scalar(select(Receipt).where(Receipt.id == receipt_id, Receipt.user_id == user_id))
             if receipt is None:
                 raise LookupError("Receipt was not found for this user.")
+            if receipt.status != ReceiptStatus.PENDING_CATEGORY:
+                raise LookupError("This receipt requires review before assigning its category.")
             receipt.category = category
             receipt.status = ReceiptStatus.COMPLETED
             receipt.completed_at = datetime.now(timezone.utc)
@@ -249,6 +271,69 @@ class SqlAlchemyReceiptStore:
             original_event = session.get(WebhookEvent, receipt.event_id)
             if original_event is not None:
                 _set_event_status(original_event, EventStatus.COMPLETED)
+            session.commit()
+
+    def _open_review(self, session, user_id: UUID, receipt_id: UUID):
+        owner = session.scalar(select(User.id).where(User.id == user_id).with_for_update())
+        if owner is None:
+            raise LookupError("User was not found.")
+        row = session.execute(select(PendingConversation, Receipt).join(
+            Receipt, PendingConversation.receipt_id == Receipt.id,
+        ).where(
+            PendingConversation.user_id == user_id, Receipt.user_id == user_id,
+            Receipt.id == receipt_id, PendingConversation.status == PendingStatus.OPEN,
+            Receipt.status == ReceiptStatus.NEEDS_REVIEW,
+        )).first()
+        if row is None:
+            raise LookupError("This review has already been resolved or is not yours.")
+        return row
+
+    def confirm_review(self, user_id: UUID, receipt_id: UUID, date_override: date | None = None) -> PendingReceipt:
+        with self._session_factory() as session:
+            pending, receipt = self._open_review(session, user_id, receipt_id)
+            confirmed_date = validate_confirmation(receipt.receipt_date, receipt.total_amount,
+                                                    receipt.vat_amount, receipt.review_reason, date_override)
+            duplicate = session.scalar(select(Receipt.id).where(
+                Receipt.user_id == user_id, Receipt.id != receipt_id,
+                Receipt.vendor_normalized == receipt.vendor_normalized,
+                Receipt.receipt_date == confirmed_date, Receipt.total_amount == receipt.total_amount,
+            ).limit(1))
+            if duplicate is not None:
+                raise DuplicateReceiptError("The confirmed date matches an existing receipt.")
+            event = session.get(WebhookEvent, receipt.event_id)
+            receipt.receipt_date = confirmed_date
+            receipt.review_reason = None
+            receipt.updated_at = datetime.now(timezone.utc)
+            receipt.status = ReceiptStatus.COMPLETED if receipt.category else ReceiptStatus.PENDING_CATEGORY
+            if receipt.status == ReceiptStatus.COMPLETED:
+                receipt.completed_at = receipt.updated_at
+                pending.status = PendingStatus.RESOLVED
+                pending.resolved_at = receipt.updated_at
+            _set_event_status(event, receipt.status)
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                session.rollback()
+                # External SQL writers may race the check despite our per-user lock.
+                if getattr(exc.orig, 'sqlstate', None) == '23505' or str(exc.orig).startswith('UNIQUE constraint failed: receipts.'):
+                    raise DuplicateReceiptError("The confirmed receipt already exists.") from exc
+                raise
+            return PendingReceipt(receipt.id, receipt.user_id, receipt.vendor_name,
+                                  receipt.vendor_normalized, receipt.receipt_date, receipt.total_amount,
+                                  receipt.vat_amount, receipt.confidence, receipt.image_path,
+                                  receipt.category, receipt.status, receipt.review_reason, receipt.raw_date_text)
+
+    def retry_review(self, user_id: UUID, receipt_id: UUID) -> None:
+        """Explicit RETRY discards only the caller's unconfirmed review draft."""
+        with self._session_factory() as session:
+            pending, receipt = self._open_review(session, user_id, receipt_id)
+            event = session.get(WebhookEvent, receipt.event_id)
+            _set_event_status(event, EventStatus.RETRY_REQUESTED, 'USER_RETRY')
+            session.delete(pending)
+            session.flush()
+            session.delete(receipt)
+            # Keep the webhook, attempt history and private image; no completed
+            # receipt or learned vendor memory can be removed by this operation.
             session.commit()
 
     def unfinished_photo_events(self) -> list[WebhookEvent]:

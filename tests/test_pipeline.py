@@ -157,7 +157,7 @@ async def test_two_chats_learn_independently_through_the_pipeline(store, session
 
     # Later receipts use the respective owner's memory without another question.
     vision.result = ReceiptExtraction(
-        Vendor_Name="Acme Supplies", Date="11/09/2026", Total_Amount="130.00",
+        Vendor_Name="Acme Supplies", Date="11/09/2026", Date_Text="11 September 2026", Total_Amount="130.00",
         VAT_Amount="15.50", Category="Model suggestion", Confidence_Score="High",
     )
     await photo(42, 505, "gray")

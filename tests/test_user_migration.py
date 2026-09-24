@@ -152,6 +152,7 @@ def test_existing_pending_receipt_resumes_after_migration(legacy_connection, pos
     legacy_connection.execute("INSERT INTO pending_conversations (chat_id,receipt_id) VALUES (42,%s)", (receipt_id,))
     migrate(legacy_connection)
     legacy_connection.execute((MIGRATIONS / "003_receipt_lifecycle.sql").read_text())
+    legacy_connection.execute((MIGRATIONS / "004_receipt_review.sql").read_text())
     store = SqlAlchemyReceiptStore(sessionmaker(bind=postgres_schema, expire_on_commit=False))
     user_id = store.get_or_create_user(42)
     assert store.get_open_pending(user_id).receipt_id == receipt_id
@@ -164,6 +165,7 @@ def test_existing_pending_receipt_resumes_after_migration(legacy_connection, pos
 def test_concurrent_first_messages_create_one_user(legacy_connection, postgres_schema):
     migrate(legacy_connection)
     legacy_connection.execute((MIGRATIONS / "003_receipt_lifecycle.sql").read_text())
+    legacy_connection.execute((MIGRATIONS / "004_receipt_review.sql").read_text())
     factory = sessionmaker(bind=postgres_schema, expire_on_commit=False)
     store = SqlAlchemyReceiptStore(factory)
     barrier = Barrier(8)
@@ -185,6 +187,7 @@ def test_concurrent_receipts_are_deduplicated_on_migrated_database(legacy_connec
     original = add_receipt(legacy_connection, 42, 50)
     migrate(legacy_connection)
     legacy_connection.execute((MIGRATIONS / "003_receipt_lifecycle.sql").read_text())
+    legacy_connection.execute((MIGRATIONS / "004_receipt_review.sql").read_text())
     factory = sessionmaker(bind=postgres_schema, expire_on_commit=False)
     store = SqlAlchemyReceiptStore(factory)
     from app.pipeline import ReceiptDraft

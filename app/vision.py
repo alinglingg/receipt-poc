@@ -30,6 +30,7 @@ class ReceiptExtraction(BaseModel):
 
     vendor_name: str = Field(alias="Vendor_Name", min_length=1, max_length=200)
     receipt_date: date = Field(alias="Date")
+    raw_date_text: str | None = Field(default=None, alias="Date_Text", max_length=80)
     total_amount: Decimal = Field(alias="Total_Amount", gt=0, max_digits=12, decimal_places=2)
     vat_amount: Decimal | None = Field(alias="VAT_Amount", ge=0, max_digits=12, decimal_places=2)
     category: str = Field(alias="Category", min_length=1, max_length=100)
@@ -58,10 +59,15 @@ class ReceiptExtraction(BaseModel):
 
 VISION_INSTRUCTIONS = """Extract data from this receipt image.
 Return only one JSON object with exactly these keys:
-Vendor_Name, Date, Total_Amount, VAT_Amount, Category, Confidence_Score.
+Vendor_Name, Date, Date_Text, Total_Amount, VAT_Amount, Category, Confidence_Score.
 Do not invent a value that cannot be read. Use Confidence_Score Low whenever
 the receipt is blurry, damaged, unreadable, missing a required field, or the
-total/date/vendor is uncertain. Date must be DD/MM/YYYY. Total_Amount and
+total/vendor or the printed date characters are unreadable. Date must be DD/MM/YYYY.
+Date_Text must copy the printed date exactly, without its time (e.g. "9/10/26"),
+never normalize it or replace digits with month names. Use null if unreadable.
+If a readable numeric date has ambiguous day/month order, provide a tentative
+Date and Medium confidence; the application will ask the user to choose.
+Total_Amount and
 VAT_Amount must be plain numeric amounts without currency symbols. VAT_Amount
 is null when no VAT is shown. Category should be the most likely expense
 category based only on the receipt.
