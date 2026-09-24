@@ -142,3 +142,45 @@ Recompressed images and new photos can have different hashes and still rely on
 the vendor/date/total rule. Existing duplicate records are not changed. Vision
 now uses high image detail (higher image-token usage) and explicit instructions
 to copy the printed final total; this does not guarantee extraction accuracy.
+
+## Phase 3: receipt lifecycle
+
+Lifecycle values live in `app/statuses.py`. Receipt statuses now support
+`PROCESSING`, `PENDING_CATEGORY`, `NEEDS_REVIEW`, `COMPLETED`, `DUPLICATE`, and
+`FAILED`. The existing Telegram flow still saves a valid receipt as
+`PENDING_CATEGORY` or `COMPLETED`; review prompts belong to Phase 4.
+
+Before valid data exists, the webhook event tracks processing, duplicate rejection,
+retry requests and failures. No placeholder expense is inserted for an unreadable
+image or duplicate. Events retain their first `processing_started_at`, latest
+`updated_at`, terminal `completed_at`, and safe `error_code`. For an event,
+`completed_at` means the attempt ended (including failed/retry/duplicate outcomes).
+
+Saved receipts gain `processing_started_at`, `updated_at`, `completed_at`,
+`review_reason`, and `failure_reason`. Receipt `completed_at` means successful
+completion, including category assignment. A Telegram delivery failure marks the
+event failed without undoing the saved expense or changing its completion status.
+Reason fields support later review workflows; Phase 3 does not change confidence
+thresholds or introduce correction commands. Application writes maintain timestamps.
+
+### Apply the Phase 3 migration before deploying
+
+1. Run the full test suite against a disposable `receipt_poc_test` PostgreSQL
+   database using `TEST_DATABASE_URL` (never the production database).
+2. Pause receipt processing and take a database backup.
+3. Run `migrations/003_receipt_lifecycle.sql` once, after migrations 001 and 002.
+   Keep its transaction intact. It adds columns and expands the receipt status
+   check, with 5-second lock and 60-second statement timeouts. No receipts,
+   categories, owners, images, or duplicate constraints are removed.
+4. Verify existing receipt counts, amounts and categories are unchanged. Then
+   push/deploy the Phase 3 backend and resume processing. Do not deploy this
+   backend before the migration; the ORM expects the new columns.
+
+Historical timestamps use the earliest processing attempt, resolved category time,
+or last recorded event update as available evidence, not exact reconstructed times.
+Unknown historical start/completion times remain NULL. The migration is one-time;
+a repeat attempt fails and rolls back. On failure, inspect the error before retrying.
+
+Smoke check with a new receipt, category reply, repeated image, and unreadable
+photo. Check receipt/event statuses and timestamps in Supabase. No new Telegram
+commands are expected in this phase.

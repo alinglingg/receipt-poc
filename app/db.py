@@ -8,12 +8,7 @@ from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, For
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 from app.config import get_settings
-
-
-EVENT_STATUSES = (
-    "RECEIVED", "PROCESSING", "PENDING_CATEGORY", "COMPLETED", "DUPLICATE", "RETRY_REQUESTED", "FAILED"
-)
-RECEIPT_STATUSES = ("PENDING_CATEGORY", "COMPLETED")
+from app.statuses import EVENT_STATUSES, RECEIPT_STATUSES, EventStatus, PendingStatus
 
 
 class Base(DeclarativeBase):
@@ -41,10 +36,13 @@ class WebhookEvent(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     file_id: Mapped[str | None] = mapped_column(Text)
     text: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RECEIVED")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default=EventStatus.RECEIVED)
     error_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     receipt: Mapped[Receipt | None] = relationship(back_populates="event", uselist=False)
     attempts: Mapped[list[ProcessingAttempt]] = relationship(back_populates="event")
@@ -76,6 +74,12 @@ class Receipt(Base):
     image_path: Mapped[str] = mapped_column(Text, nullable=False)
     image_sha256: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_reason: Mapped[str | None] = mapped_column(Text)
+    failure_reason: Mapped[str | None] = mapped_column(Text)
 
     event: Mapped[WebhookEvent] = relationship(back_populates="receipt")
     pending_conversation: Mapped[PendingConversation | None] = relationship(
@@ -123,7 +127,7 @@ class PendingConversation(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     receipt_id: Mapped[UUID] = mapped_column(ForeignKey("receipts.id", ondelete="CASCADE"), unique=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="OPEN")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=PendingStatus.OPEN)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

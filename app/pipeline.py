@@ -8,8 +8,9 @@ from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
-from app.imaging import InvalidReceiptImage, PreparedImage, prepare_receipt_image
+from app.imaging import InvalidReceiptImage, prepare_receipt_image
 from app.storage import StorageError
+from app.statuses import EventStatus, ReceiptStatus
 from app.vision import ReceiptExtraction, VisionExtractionError, is_usable_extraction
 
 
@@ -32,6 +33,8 @@ class ReceiptDraft:
     status: str
     image_path: str
     image_sha256: str
+    review_reason: str | None = None
+    failure_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,7 +89,7 @@ class ReceiptPipeline:
 
     async def process_photo(self, *, event_id: UUID, chat_id: int, image_bytes: bytes) -> None:
         user_id = self._store.get_or_create_user(chat_id)
-        self._store.mark_event(event_id, "PROCESSING")
+        self._store.mark_event(event_id, EventStatus.PROCESSING)
         try:
             prepared = prepare_receipt_image(image_bytes)
             self._store.record_attempt(event_id, "imaging", True)
@@ -95,7 +98,7 @@ class ReceiptPipeline:
             return
 
         if self._store.is_duplicate_image(user_id, prepared.sha256):
-            self._store.mark_event(event_id, "DUPLICATE")
+            self._store.mark_event(event_id, EventStatus.DUPLICATE)
             await self._notifier.send(chat_id, "⚠️ *Duplicate receipt detected*\n\nThis image is already saved. No new entry was created.")
             return
 
@@ -113,7 +116,7 @@ class ReceiptPipeline:
 
         vendor_normalized = normalize_vendor(extraction.vendor_name)
         if self._store.is_duplicate(user_id, vendor_normalized, extraction.receipt_date, extraction.total_amount):
-            self._store.mark_event(event_id, "DUPLICATE")
+            self._store.mark_event(event_id, EventStatus.DUPLICATE)
             await self._notifier.send(chat_id, "⚠️ *Duplicate receipt detected*\n\nI found the same vendor, date, and total already recorded. No new entry was created.")
             return
 
@@ -134,14 +137,14 @@ class ReceiptPipeline:
                     vat_amount=extraction.vat_amount,
                     category=category,
                     confidence=extraction.confidence_score.value,
-                    status="COMPLETED" if category else "PENDING_CATEGORY",
+                    status=ReceiptStatus.COMPLETED if category else ReceiptStatus.PENDING_CATEGORY,
                     image_path=image_path,
                     image_sha256=prepared.sha256,
                 )
             )
             self._store.record_attempt(event_id, "storage_and_save", True)
         except DuplicateReceiptError:
-            self._store.mark_event(event_id, "DUPLICATE")
+            self._store.mark_event(event_id, EventStatus.DUPLICATE)
             await self._notifier.send(chat_id, "⚠️ *Duplicate receipt detected*\n\nNo new entry was created.")
             return
         except StorageError:
@@ -151,11 +154,11 @@ class ReceiptPipeline:
 
         if category is None:
             self._store.create_pending_conversation(user_id, receipt_id)
-            self._store.mark_event(event_id, "PENDING_CATEGORY")
+            self._store.mark_event(event_id, EventStatus.PENDING_CATEGORY)
             await self._notifier.send(chat_id, f"❓ *Unrecognized vendor:* {extraction.vendor_name}\n\nWhich expense category should I assign this to?")
             return
 
-        self._store.mark_event(event_id, "COMPLETED")
+        self._store.mark_event(event_id, EventStatus.COMPLETED)
         await self._send_summary(chat_id, extraction, category, image_path)
 
     async def process_category_reply(self, *, event_id: UUID, chat_id: int, category: str) -> None:
@@ -163,16 +166,16 @@ class ReceiptPipeline:
         pending = self._store.get_open_pending(user_id)
         category = " ".join(category.split())
         if pending is None:
-            self._store.mark_event(event_id, "COMPLETED")
+            self._store.mark_event(event_id, EventStatus.COMPLETED)
             await self._notifier.send(chat_id, "Send me a receipt image first, then I can record its category.")
             return
         if not category or len(category) > 100:
-            self._store.mark_event(event_id, "RETRY_REQUESTED", "INVALID_CATEGORY")
+            self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, "INVALID_CATEGORY")
             await self._notifier.send(chat_id, "Please reply with a short expense category, for example `Food Supplies`.")
             return
 
         self._store.resolve_category(user_id, pending.receipt_id, category)
-        self._store.mark_event(event_id, "COMPLETED")
+        self._store.mark_event(event_id, EventStatus.COMPLETED)
         await self._notifier.send(chat_id, f"✅ Category saved: *{category}*\n\nFuture receipts from *{pending.vendor_name}* will use this category.")
         extraction = ReceiptExtraction(
             Vendor_Name=pending.vendor_name,
@@ -185,7 +188,7 @@ class ReceiptPipeline:
         await self._send_summary(chat_id, extraction, category, pending.image_path)
 
     async def _request_retry(self, event_id: UUID, chat_id: int, error_code: str) -> None:
-        self._store.mark_event(event_id, "RETRY_REQUESTED", error_code)
+        self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, error_code)
         await self._notifier.send(chat_id, "⚠️ I couldn’t read that receipt reliably. Please send a clearer, well-lit photo showing the full receipt.")
 
     async def _send_summary(self, chat_id: int, extraction: ReceiptExtraction, category: str, image_path: str) -> None:

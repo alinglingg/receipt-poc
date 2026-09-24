@@ -13,6 +13,23 @@ from sqlalchemy.orm import Session
 
 from app.db import PendingConversation, ProcessingAttempt, Receipt, User, UserVendorMemory, WebhookEvent
 from app.pipeline import DuplicateReceiptError, PendingReceipt, ReceiptDraft
+from app.statuses import EventStatus, ReceiptStatus, PendingStatus, EVENT_TERMINAL_STATUSES
+
+
+def _set_event_status(event: WebhookEvent, status: str, error_code: str | None = None) -> None:
+    status = EventStatus(status)
+    now = datetime.now(timezone.utc)
+    if status == EventStatus.PROCESSING and event.processing_started_at is None:
+        event.processing_started_at = now
+    if status in EVENT_TERMINAL_STATUSES:
+        if event.status != status or event.completed_at is None:
+            event.completed_at = now
+    else:
+        event.completed_at = None
+    event.status = status
+    event.error_code = error_code
+    event.updated_at = now
+
 
 
 class SqlAlchemyReceiptStore:
@@ -57,8 +74,7 @@ class SqlAlchemyReceiptStore:
             event = session.get(WebhookEvent, event_id)
             if event is None:
                 raise LookupError(f"Webhook event {event_id} was not found.")
-            event.status = status
-            event.error_code = error_code
+            _set_event_status(event, status, error_code)
             session.commit()
 
     def record_attempt(self, event_id: UUID, stage: str, success: bool, error_code: str | None = None) -> None:
@@ -114,8 +130,8 @@ class SqlAlchemyReceiptStore:
             owner = session.scalar(select(User.id).where(
                 User.id == draft.user_id, User.telegram_chat_id == draft.chat_id,
             ).with_for_update())
-            event_chat = session.scalar(select(WebhookEvent.chat_id).where(WebhookEvent.id == draft.event_id))
-            if owner is None or event_chat != draft.chat_id:
+            event = session.get(WebhookEvent, draft.event_id)
+            if owner is None or event is None or event.chat_id != draft.chat_id:
                 raise LookupError("Receipt owner does not match its Telegram event.")
             # Serialize saves per owner so concurrent OCR results cannot bypass
             # the image check. The early pipeline check alone is not atomic.
@@ -124,6 +140,7 @@ class SqlAlchemyReceiptStore:
                 Receipt.image_sha256 == draft.image_sha256,
             ).limit(1)) is not None:
                 raise DuplicateReceiptError("This receipt image is already saved.")
+            saved_at = datetime.now(timezone.utc)
             receipt = Receipt(
                 event_id=draft.event_id,
                 chat_id=draft.chat_id,
@@ -138,6 +155,11 @@ class SqlAlchemyReceiptStore:
                 status=draft.status,
                 image_path=draft.image_path,
                 image_sha256=draft.image_sha256,
+                review_reason=draft.review_reason,
+                failure_reason=draft.failure_reason,
+                processing_started_at=event.processing_started_at,
+                updated_at=saved_at,
+                completed_at=saved_at if draft.status == ReceiptStatus.COMPLETED else None,
             )
             session.add(receipt)
             try:
@@ -172,7 +194,7 @@ class SqlAlchemyReceiptStore:
                 select(PendingConversation, Receipt)
                 .join(Receipt, PendingConversation.receipt_id == Receipt.id)
                 .where(PendingConversation.user_id == user_id, Receipt.user_id == user_id,
-                       PendingConversation.status == "OPEN")
+                       PendingConversation.status == PendingStatus.OPEN)
             ).first()
             if row is None:
                 return None
@@ -199,7 +221,7 @@ class SqlAlchemyReceiptStore:
                 select(PendingConversation).where(
                     PendingConversation.user_id == user_id,
                     PendingConversation.receipt_id == receipt_id,
-                    PendingConversation.status == "OPEN",
+                    PendingConversation.status == PendingStatus.OPEN,
                 )
             )
             if pending is None:
@@ -208,8 +230,12 @@ class SqlAlchemyReceiptStore:
             if receipt is None:
                 raise LookupError("Receipt was not found for this user.")
             receipt.category = category
-            receipt.status = "COMPLETED"
-            pending.status = "RESOLVED"
+            receipt.status = ReceiptStatus.COMPLETED
+            receipt.completed_at = datetime.now(timezone.utc)
+            receipt.updated_at = receipt.completed_at
+            receipt.review_reason = None
+            receipt.failure_reason = None
+            pending.status = PendingStatus.RESOLVED
             pending.resolved_at = datetime.now(timezone.utc)
 
             memory = session.get(UserVendorMemory, (user_id, receipt.vendor_normalized))
@@ -222,7 +248,7 @@ class SqlAlchemyReceiptStore:
 
             original_event = session.get(WebhookEvent, receipt.event_id)
             if original_event is not None:
-                original_event.status = "COMPLETED"
+                _set_event_status(original_event, EventStatus.COMPLETED)
             session.commit()
 
     def unfinished_photo_events(self) -> list[WebhookEvent]:
@@ -232,7 +258,7 @@ class SqlAlchemyReceiptStore:
                 session.scalars(
                     select(WebhookEvent).where(
                         WebhookEvent.kind == "photo",
-                        WebhookEvent.status.in_(("RECEIVED", "PROCESSING")),
+                        WebhookEvent.status.in_((EventStatus.RECEIVED, EventStatus.PROCESSING)),
                     )
                 )
             )

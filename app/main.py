@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, st
 from app.config import Settings, get_settings
 from app.db import create_session_factory
 from app.pipeline import ReceiptPipeline
+from app.statuses import EventStatus
 from app.repository import SqlAlchemyReceiptStore
 from app.storage import SupabaseStorage
 from app.telegram import TelegramBot, TelegramError, TelegramUpdate, parse_update
@@ -102,16 +103,20 @@ def create_app(services: WebhookServices | None = None) -> FastAPI:
 
 async def _process_event(services: WebhookServices, update: TelegramUpdate, event_id) -> None:
     try:
+        services.store.mark_event(event_id, EventStatus.PROCESSING)
         if update.kind == "photo" and update.file_id:
             image_bytes = await services.telegram.download_photo(update.file_id)
             await services.pipeline.process_photo(event_id=event_id, chat_id=update.chat_id, image_bytes=image_bytes)
         elif update.kind == "text" and update.text is not None:
             await services.pipeline.process_category_reply(event_id=event_id, chat_id=update.chat_id, category=update.text)
         else:
-            services.store.mark_event(event_id, "COMPLETED")
+            services.store.mark_event(event_id, EventStatus.COMPLETED)
             await services.telegram.send(update.chat_id, "Please send a receipt image, or reply with a category when asked.")
     except TelegramError:
-        services.store.mark_event(event_id, "FAILED", "TELEGRAM_ERROR")
+        services.store.mark_event(event_id, EventStatus.FAILED, "TELEGRAM_ERROR")
+    except Exception:
+        # Persist a safe reason; never store provider payloads or credentials.
+        services.store.mark_event(event_id, EventStatus.FAILED, "PROCESSING_ERROR")
 
 
 app = create_app()
