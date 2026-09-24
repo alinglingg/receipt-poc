@@ -65,6 +65,11 @@ total/date/vendor is uncertain. Date must be DD/MM/YYYY. Total_Amount and
 VAT_Amount must be plain numeric amounts without currency symbols. VAT_Amount
 is null when no VAT is shown. Category should be the most likely expense
 category based only on the receipt.
+Copy Total_Amount from the printed final total including tax, after discounts.
+Do not substitute the remaining balance/amount due, change, or an individual
+line item. A paid invoice may show amount due zero while its total is positive.
+Do not add subtotal, total, and payment together; they can repeat the same amount.
+Check the exact digits against the printed total. If ambiguous, use Low confidence.
 """
 
 
@@ -87,7 +92,7 @@ class OpenAIVisionExtractor:
                         "role": "user",
                         "content": [
                             {"type": "input_text", "text": "Extract this receipt."},
-                            {"type": "input_image", "image_url": image_data_url, "detail": "low"},
+                            {"type": "input_image", "image_url": image_data_url, "detail": "high"},
                         ],
                     }
                 ],

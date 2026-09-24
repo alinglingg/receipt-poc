@@ -46,7 +46,7 @@ def test_database_constraint_catches_duplicate_race(store: SqlAlchemyReceiptStor
     user_id = store.get_or_create_user(42)
     store.create_receipt(draft(first_event.id, user_id))
     with pytest.raises(DuplicateReceiptError):
-        store.create_receipt(draft(second_event.id, user_id))
+        store.create_receipt(replace(draft(second_event.id, user_id), image_sha256="b" * 64))
 
 
 def test_users_are_created_once_per_chat_including_group_chats(store, session_factory):
@@ -94,7 +94,7 @@ def test_vendor_learning_and_pending_receipts_are_isolated(store, session_factor
     assert store.find_vendor_category(user_a, "ACMESUPPLIES") == "Meals"
 
     # Existing memory updates remain scoped too.
-    _, next_receipt = create_pending(store, 42, 212, total_amount=Decimal("126.00"))
+    _, next_receipt = create_pending(store, 42, 212, total_amount=Decimal("126.00"), image_sha256="b" * 64)
     store.resolve_category(user_a, next_receipt, "Travel")
     assert store.find_vendor_category(user_a, "ACMESUPPLIES") == "Travel"
     assert store.find_vendor_category(user_b, "ACMESUPPLIES") == "Client Entertainment"

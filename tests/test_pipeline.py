@@ -13,9 +13,9 @@ from app.pipeline import (
 from app.vision import ConfidenceScore, ReceiptExtraction
 
 
-def image_bytes() -> bytes:
+def image_bytes(color="white") -> bytes:
     output = BytesIO()
-    Image.new("RGB", (32, 32), "white").save(output, format="JPEG")
+    Image.new("RGB", (32, 32), color).save(output, format="JPEG")
     return output.getvalue()
 
 
@@ -68,6 +68,9 @@ class FakeStore:
 
     def is_duplicate(self, *args: object) -> bool:
         return self.duplicate
+
+    def is_duplicate_image(self, user_id, image_sha256):
+        return any(d.user_id == user_id and d.image_sha256 == image_sha256 for d in self.drafts)
 
     def create_receipt(self, draft: ReceiptDraft) -> UUID:
         self.drafts.append(draft)
@@ -277,9 +280,9 @@ async def test_two_chats_learn_independently_through_the_pipeline(store, session
     vision = FakeVision(extraction())
     pipeline = ReceiptPipeline(store=store, vision=vision, storage=FakeStorage(), notifier=notifier)
 
-    async def photo(chat_id, update_id):
+    async def photo(chat_id, update_id, color="white"):
         event = store.create_webhook_event(update_id=update_id, chat_id=chat_id, kind="photo")
-        await pipeline.process_photo(event_id=event.id, chat_id=chat_id, image_bytes=image_bytes())
+        await pipeline.process_photo(event_id=event.id, chat_id=chat_id, image_bytes=image_bytes(color))
 
     async def reply(chat_id, update_id, category):
         event = store.create_webhook_event(update_id=update_id, chat_id=chat_id, kind="text", text=category)
@@ -305,11 +308,11 @@ async def test_two_chats_learn_independently_through_the_pipeline(store, session
         Vendor_Name="Acme Supplies", Date="11/09/2026", Total_Amount="130.00",
         VAT_Amount="15.50", Category="Model suggestion", Confidence_Score="High",
     )
-    await photo(42, 505)
+    await photo(42, 505, "gray")
     assert "*Category:* Meals" in notifier.messages[-1]
-    await photo(43, 506)
+    await photo(43, 506, "gray")
     assert "*Category:* Client Entertainment" in notifier.messages[-1]
-    await photo(42, 507)
+    await photo(42, 507, "gray")
     assert "Duplicate" in notifier.messages[-1]
 
     with session_factory() as session:

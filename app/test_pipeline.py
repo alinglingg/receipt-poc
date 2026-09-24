@@ -45,6 +45,9 @@ class FakeStore:
     def is_duplicate(self, *args: object) -> bool:
         return self.duplicate
 
+    def is_duplicate_image(self, user_id, image_sha256):
+        return any(d.user_id == user_id and d.image_sha256 == image_sha256 for d in self.drafts)
+
     def create_receipt(self, draft: ReceiptDraft) -> UUID:
         self.drafts.append(draft)
         receipt_id = uuid4()

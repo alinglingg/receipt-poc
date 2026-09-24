@@ -100,14 +100,30 @@ class SqlAlchemyReceiptStore:
                 )
             ) is not None
 
+    def is_duplicate_image(self, user_id: UUID, image_sha256: str) -> bool:
+        if not image_sha256:
+            return False
+        with self._session_factory() as session:
+            return session.scalar(select(Receipt.id).where(
+                Receipt.user_id == user_id,
+                Receipt.image_sha256 == image_sha256,
+            ).limit(1)) is not None
+
     def create_receipt(self, draft: ReceiptDraft) -> UUID:
         with self._session_factory() as session:
             owner = session.scalar(select(User.id).where(
                 User.id == draft.user_id, User.telegram_chat_id == draft.chat_id,
-            ))
+            ).with_for_update())
             event_chat = session.scalar(select(WebhookEvent.chat_id).where(WebhookEvent.id == draft.event_id))
             if owner is None or event_chat != draft.chat_id:
                 raise LookupError("Receipt owner does not match its Telegram event.")
+            # Serialize saves per owner so concurrent OCR results cannot bypass
+            # the image check. The early pipeline check alone is not atomic.
+            if draft.image_sha256 and session.scalar(select(Receipt.id).where(
+                Receipt.user_id == draft.user_id,
+                Receipt.image_sha256 == draft.image_sha256,
+            ).limit(1)) is not None:
+                raise DuplicateReceiptError("This receipt image is already saved.")
             receipt = Receipt(
                 event_id=draft.event_id,
                 chat_id=draft.chat_id,

@@ -7,7 +7,7 @@ Telegram receipt-processing proof of concept for the Full Stack Automation and A
 1. Receives Telegram images through a verified webhook.
 2. Compresses and normalizes images before Vision processing.
 3. Extracts strict receipt JSON using OpenAI Vision.
-4. Detects duplicates with a database-enforced exact rule.
+4. Rejects repeated image bytes per user before extraction, alongside the database-enforced vendor/date/total rule.
 5. Remembers vendor categories and pauses for unknown vendors.
 6. Stores receipt images in a private Supabase Storage bucket.
 7. Sends a Markdown confirmation with a short-lived signed link.
@@ -129,3 +129,16 @@ https://YOUR_PUBLIC_HOST/webhooks/telegram
 ```
 
 using the exact value of `TELEGRAM_WEBHOOK_SECRET` as Telegram's webhook secret token.
+
+### Repeat-image protection
+
+Saved image SHA-256 values are checked per user before Vision runs and again
+under an owner-row lock when saving to PostgreSQL. This prevents identical
+image bytes from creating another receipt when extraction returns different
+amounts, including while the first receipt awaits a category. Unsaved low-confidence
+images can still be retried. No additional migration is required.
+
+Recompressed images and new photos can have different hashes and still rely on
+the vendor/date/total rule. Existing duplicate records are not changed. Vision
+now uses high image detail (higher image-token usage) and explicit instructions
+to copy the printed final total; this does not guarantee extraction accuracy.

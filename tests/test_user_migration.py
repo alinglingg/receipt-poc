@@ -177,7 +177,8 @@ def test_concurrent_first_messages_create_one_user(legacy_connection, postgres_s
         assert session.scalar(select(func.count(User.id))) == 1
 
 
-def test_concurrent_receipts_are_deduplicated_on_migrated_database(legacy_connection, postgres_schema):
+@pytest.mark.parametrize("changed_total", [False, True])
+def test_concurrent_receipts_are_deduplicated_on_migrated_database(legacy_connection, postgres_schema, changed_total):
     # Use a backfilled receipt as the template, with a new date to avoid its duplicate key.
     original = add_receipt(legacy_connection, 42, 50)
     migrate(legacy_connection)
@@ -191,13 +192,13 @@ def test_concurrent_receipts_are_deduplicated_on_migrated_database(legacy_connec
     draft = ReceiptDraft(event_id=events[0].id, chat_id=42, user_id=user_id,
                          vendor_name="ACME", vendor_normalized="ACME", receipt_date=date(2026, 9, 11),
                          total_amount=Decimal("125.50"), vat_amount=None, category="Meals",
-                         confidence="High", status="COMPLETED", image_path="42/new.jpg", image_sha256="a" * 64)
+                         confidence="High", status="COMPLETED", image_path="42/new.jpg", image_sha256="b" * 64)
     barrier = Barrier(2)
 
     def save(event):
         barrier.wait(timeout=10)
         try:
-            store.create_receipt(replace(draft, event_id=event.id))
+            store.create_receipt(replace(draft, event_id=event.id, total_amount=Decimal("7500") if changed_total and event.id == events[1].id else draft.total_amount))
             return "saved"
         except DuplicateReceiptError:
             return "duplicate"
