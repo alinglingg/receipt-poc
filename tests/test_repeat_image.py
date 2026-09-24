@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 
 from app.db import Receipt
 from app.pipeline import DuplicateReceiptError, ReceiptPipeline
-from tests.test_pipeline import FakeStore, FakeStorage, FakeNotifier, extraction, image_bytes
+from tests.helpers import FakeStore, FakeStorage, FakeNotifier, extraction, image_bytes
 from tests.test_repository import draft
 
 
