@@ -16,6 +16,9 @@ from tests.helpers import FakeVision, FakeStorage, FakeNotifier, extraction, ima
 def test_event_timestamps_preserve_first_start_and_record_retry_reason(store, session_factory):
     event = store.create_webhook_event(update_id=700, chat_id=42, kind='photo')
     old = datetime.now(timezone.utc) - timedelta(minutes=5)
+    # SQLite drops timezone metadata; PostgreSQL returns an aware datetime in
+    # its session timezone. Compare aware instants without relabeling the offset.
+    expected = old.replace(tzinfo=None) if session_factory.kw['bind'].dialect.name == 'sqlite' else old
     with session_factory() as session:
         row = session.get(WebhookEvent, event.id)
         row.status = EventStatus.PROCESSING
@@ -25,14 +28,14 @@ def test_event_timestamps_preserve_first_start_and_record_retry_reason(store, se
     store.mark_event(event.id, EventStatus.RETRY_REQUESTED, 'LOW_CONFIDENCE')
     with session_factory() as session:
         row = session.get(WebhookEvent, event.id)
-        assert row.processing_started_at.replace(tzinfo=timezone.utc) == old
+        assert row.processing_started_at == expected
         assert row.completed_at >= row.processing_started_at
         assert row.error_code == 'LOW_CONFIDENCE'
     store.mark_event(event.id, EventStatus.PROCESSING)
     with session_factory() as session:
         row = session.get(WebhookEvent, event.id)
         assert row.completed_at is None and row.error_code is None
-        assert row.processing_started_at.replace(tzinfo=timezone.utc) == old
+        assert row.processing_started_at == expected
 
 
 @pytest.mark.asyncio
