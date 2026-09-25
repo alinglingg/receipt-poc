@@ -423,3 +423,55 @@ timeout and rolls back on error. RLS is enabled with no client policies. Backend
 access uses the existing privileged direct database role; anon/authenticated API
 clients are not given history access. If the application is rolled back, leave
 the additive history table in place to preserve its data.
+
+
+## Phase 9: explicit vendor aliases
+
+Use `/vendors` to see vendors whose categories you have learned through the
+receipt conversation. Use an existing name from that list as the target:
+
+```text
+/alias Starbucks #1234 | Starbucks
+/aliases
+/unalias Starbucks #1234
+```
+
+Both lists accept a page number (`/vendors 2`, `/aliases 2`) and show ten entries
+per page. Names accept spaces; the single `|` separates alternate and target
+names. Aliases match exactly after the existing alphanumeric uppercase
+normalization. Case and punctuation variations already match without an alias.
+There is no fuzzy matching, automatic branch-number stripping or global memory.
+
+An explicit alias uses the target's current learned category for future receipts
+in this Telegram chat. It does not copy category memory, so later category-learning
+changes at the target are reflected in future alias lookups. Direct learned vendor
+memory takes precedence. Targets must be learned vendors, not aliases. Names with
+existing memory, conflicting alias targets, self-links, and links affecting an
+open receipt for the alternate name are rejected. Repeating the same link is
+idempotent. Remove a link before assigning it to a different target. Writes share
+the existing per-user lock with receipt creation/category learning.
+
+Receipts retain their extracted vendor names and normalized keys. Historical
+categories, audit entries, receipt searches and duplicate constraints are unchanged;
+this phase links category recognition, not financial records. Different alias names
+are not merged into one duplicate key. Removing an alias affects only future
+category lookups. Alias commands do not resolve a pending conversation, and the
+conversational model cannot add or remove aliases. Receipt audit history does not
+record alias management because no receipt changes during that operation.
+
+### Phase 9 deployment order
+
+Run the full disposable PostgreSQL suite first. Back up the database, then run
+`migrations/006_vendor_aliases.sql` once in Supabase under the existing migration
+role, after migration 005. Do not rerun migrations 001–005. This is an additive
+backend-only table with RLS enabled and no client policies. A composite foreign
+key keeps targets in the same user's category memory. No receipt or memory rows
+are backfilled or rewritten. Foreign-key creation can briefly lock the memory
+table; 5-second lock and 60-second statement timeouts bound the migration.
+
+Only after migration 006 succeeds, push/deploy this backend. Smoke-test `/vendors`,
+add an alternate spelling linked to one of your learned vendors, inspect `/aliases`,
+and remove the test link with `/unalias`. Automated pipeline tests verify that
+matching new receipts inherit the target category while keeping their original
+vendor names and image-duplicate protection. Leave the additive table in place if
+rolling back the application.

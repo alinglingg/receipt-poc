@@ -12,9 +12,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.audit import receipt_values, record_event, receipt_history
+from app.vendors import VendorAliases
 from app.expenses import ExpenseQueries
 from app.corrections import recent_receipts, correct_receipt
-from app.db import PendingConversation, ProcessingAttempt, Receipt, User, UserVendorMemory, WebhookEvent
+from app.db import PendingConversation, ProcessingAttempt, Receipt, User, UserVendorMemory, VendorAlias, WebhookEvent
 from app.pipeline import DuplicateReceiptError, PendingReceiptError, PendingReceipt, ReceiptDraft
 from app.review import validate_confirmation
 from app.statuses import EventStatus, ReceiptStatus, PendingStatus, EVENT_TERMINAL_STATUSES
@@ -42,6 +43,7 @@ class SqlAlchemyReceiptStore:
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
         self.expenses = ExpenseQueries(session_factory)
+        self.vendors = VendorAliases(session_factory)
 
     def receipt_history(self, user_id, receipt_id, page=1):
         return receipt_history(self._session_factory, user_id, receipt_id, page)
@@ -112,12 +114,13 @@ class SqlAlchemyReceiptStore:
 
     def find_vendor_category(self, user_id: UUID, normalized_vendor: str) -> str | None:
         with self._session_factory() as session:
-            return session.scalar(
-                select(UserVendorMemory.category).where(
-                    UserVendorMemory.user_id == user_id,
-                    UserVendorMemory.normalized_name == normalized_vendor,
-                )
-            )
+            direct = session.get(UserVendorMemory, (user_id, normalized_vendor))
+            if direct is not None:
+                return direct.category
+            return session.scalar(select(UserVendorMemory.category).join(
+                VendorAlias, (VendorAlias.user_id == UserVendorMemory.user_id) &
+                (VendorAlias.target_normalized == UserVendorMemory.normalized_name),
+            ).where(VendorAlias.user_id == user_id, VendorAlias.normalized_name == normalized_vendor))
 
     def is_duplicate(self, user_id: UUID, normalized_vendor: str, receipt_date: date, total_amount: Decimal) -> bool:
         with self._session_factory() as session:

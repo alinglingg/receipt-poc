@@ -154,6 +154,21 @@ class ProcessingAttempt(Base):
     event: Mapped[WebhookEvent] = relationship(back_populates="attempts")
 
 
+class VendorAlias(Base):
+    __tablename__ = "vendor_aliases"
+    __table_args__ = (
+        ForeignKeyConstraint(["user_id", "target_normalized"],
+                             ["user_vendor_memory.user_id", "user_vendor_memory.normalized_name"],
+                             name="vendor_aliases_target_fkey"),
+        CheckConstraint("normalized_name <> target_normalized", name="vendor_aliases_not_self"),
+    )
+    user_id: Mapped[UUID] = mapped_column(primary_key=True)
+    normalized_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    target_normalized: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ReceiptEvent(Base):
     __tablename__ = "receipt_events"
     __table_args__ = (

@@ -1,5 +1,6 @@
 """Handle deterministic receipt commands before category/review replies."""
 from uuid import UUID
+from app.vendors import COMMANDS as VENDOR_COMMANDS, HELP as VENDOR_HELP, vendor_response
 from app.corrections import HELP, parse_edit
 from app.expense_commands import COMMANDS, HELP as EXPENSE_HELP, expense_response
 from app.pipeline import DuplicateReceiptError
@@ -26,6 +27,9 @@ async def process_command(store, notifier, *, event_id, chat_id, text):
         user_id = store.get_or_create_user(chat_id)
         if text.lower() in {'/help', '/start'}:
             response = 'View changes: `/history <receipt-id>`\n\n' + HELP + "\n\n" + EXPENSE_HELP + '\n\nYou can also ask: How much did I spend this month?\nFor pending categories, reply CATEGORY Dining (or your chosen category).'
+            response += '\n\n' + VENDOR_HELP
+        elif text.split()[0].lower() in VENDOR_COMMANDS:
+            response = vendor_response(store.vendors, user_id, text)
         elif text.split()[0].lower() == '/history':
             parts = text.split()
             if len(parts) not in (2, 3):
