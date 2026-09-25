@@ -325,3 +325,55 @@ No schema migration or new environment variable is required. Validate with the
 full disposable PostgreSQL suite, push the phase commit, and deploy the latest
 commit on Render. Smoke-test `/summary 2026-09` and `/categories 2026-09`, checking
 against the completed receipt dates/amounts in `/receipts`. Do not rerun migrations.
+
+
+## Phase 7: natural-language expense questions
+
+After deployment, ask the bot directly:
+
+- How much did I spend this month?
+- How much did I spend on Dining in September?
+- What are my five biggest expenses?
+- Compare this month with last month.
+- Find my Keigo receipt.
+- Show Transportation expenses this week.
+
+The existing OPENAI_API_KEY and OPENAI_MODEL settings are reused (default gpt-4o).
+There is no migration or new required configuration. Question text and the current
+Asia/Manila date are sent to OpenAI using a strict Responses function tool. The
+model selects one read-only query; it receives no database receipts, credentials,
+chat ID, or owner ID. The backend validates every argument and supplies the owner
+from the Telegram chat. No model-selected SQL, writes, or arbitrary functions are
+allowed. Output is formatted directly from the existing SQL tools, without a second
+model call or model-written totals. Response storage is disabled for these requests.
+See the [official function-calling guide](https://developers.openai.com/api/docs/guides/function-calling).
+
+**Category replies now use an explicit prefix:** when asked for a category, send
+`CATEGORY Dining`, replacing Dining with your chosen category. This prevents a
+question or greeting from becoming a learned category. Bare text (including a bare
+category name) goes to the read-only assistant, leaving the pending receipt open.
+Existing CONFIRM, CONFIRM YYYY-MM-DD, REVIEW and RETRY review commands retain their
+behavior. Slash commands still bypass the model. Questions can be asked while a
+receipt is pending; they do not confirm it or change its category. Corrections
+remain explicit `/edit` commands.
+
+Questions are independent; there is no conversation history or implicit “that
+receipt” selection. This/last month use the current Manila calendar date; a named
+month without a year assumes the current year. Search date ranges include start
+and exclude end, with weeks beginning Monday. Answers display the selected period
+and filters so an interpretation can be checked. Category filters are exact names,
+not inferred aliases. Unsupported or ambiguous questions receive a fixed request
+to clarify. Monthly totals, category summaries, comparison and limited receipt
+lists are supported; other summary periods require a more specific supported
+question. Money retains the Phase 6 single-currency assumption.
+
+Question input is limited to 2,000 characters, output to one validated tool call,
+and receipt lists to ten results. Production requests have a 20-second SDK timeout
+and no automatic SDK retries. Provider/validation failures show a safe retry/help
+message without touching pending receipts. Tests fake OpenAI, Telegram and storage;
+they validate routing and tool execution, not live model interpretation quality.
+
+Before pushing, run the full disposable PostgreSQL suite. After Render deploys,
+ask “How much did I spend in September 2026?” and compare with `/summary 2026-09`.
+Test a question while a receipt awaits a category, then resolve it with CATEGORY.
+No Supabase migrations should be rerun.

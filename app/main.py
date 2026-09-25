@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, status
 
+from app.assistant import ExpenseAssistant, process_assistant_text
 from app.commands import process_command
 from app.config import Settings, get_settings
 from app.db import create_session_factory
@@ -22,6 +23,7 @@ class WebhookServices:
     store: SqlAlchemyReceiptStore
     pipeline: ReceiptPipeline
     telegram: TelegramBot
+    assistant: ExpenseAssistant | None = None
 
 
 def build_services(settings: Settings) -> WebhookServices | None:
@@ -51,7 +53,8 @@ def build_services(settings: Settings) -> WebhookServices | None:
         storage=storage,
         notifier=telegram,
     )
-    return WebhookServices(store=SqlAlchemyReceiptStore(create_session_factory()), pipeline=pipeline, telegram=telegram)
+    return WebhookServices(store=SqlAlchemyReceiptStore(create_session_factory()), pipeline=pipeline, telegram=telegram,
+                           assistant=ExpenseAssistant(settings.openai_api_key.get_secret_value(), settings.openai_model))
 
 
 def create_app(services: WebhookServices | None = None) -> FastAPI:
@@ -111,7 +114,9 @@ async def _process_event(services: WebhookServices, update: TelegramUpdate, even
         elif update.kind == "text" and update.text is not None:
             handled = await process_command(services.store, services.telegram,
                                             event_id=event_id, chat_id=update.chat_id, text=update.text)
-            if not handled:
+            if not handled and services.assistant is not None:
+                await process_assistant_text(services, event_id=event_id, chat_id=update.chat_id, text=update.text)
+            elif not handled:
                 await services.pipeline.process_category_reply(event_id=event_id, chat_id=update.chat_id, category=update.text)
         else:
             services.store.mark_event(event_id, EventStatus.COMPLETED)

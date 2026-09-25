@@ -24,7 +24,7 @@ async def process_command(store, notifier, *, event_id, chat_id, text):
     try:
         user_id = store.get_or_create_user(chat_id)
         if text.lower() in {'/help', '/start'}:
-            response = HELP + "\n\n" + EXPENSE_HELP
+            response = HELP + "\n\n" + EXPENSE_HELP + '\n\nYou can also ask: How much did I spend this month?\nFor pending categories, reply CATEGORY Dining (or your chosen category).'
         elif text.split()[0].lower() in COMMANDS:
             response = expense_response(store.expenses, user_id, text, format_receipt)
         elif text.lower() == '/receipts':
@@ -47,6 +47,11 @@ async def process_command(store, notifier, *, event_id, chat_id, text):
         await notifier.send(chat_id, 'That change would duplicate another receipt. Nothing was changed.')
         return True
     store.mark_event(event_id, EventStatus.COMPLETED)
+    await send_response(notifier, chat_id, response)
+    return True
+
+
+async def send_response(notifier, chat_id, response):
     # Split only between complete receipt blocks, preserving Markdown and IDs.
     chunk = ''
     for block in response.split('\n\n'):

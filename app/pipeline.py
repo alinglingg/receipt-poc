@@ -195,7 +195,7 @@ class ReceiptPipeline:
             if reasons:
                 await self._send_pending_prompt(chat_id, pending)
             else:
-                await self._notifier.send(chat_id, f"❓ *Unrecognized vendor:* {escape_markdown(extraction.vendor_name)}\n\nWhich expense category should I assign this to?")
+                await self._notifier.send(chat_id, f"❓ *Unrecognized vendor:* {escape_markdown(extraction.vendor_name)}\n\nWhich expense category should I assign this to? Reply `CATEGORY Dining` (replace Dining with your category).")
             return
 
         await self._send_summary(chat_id, extraction, category, image_path)
@@ -217,7 +217,7 @@ class ReceiptPipeline:
             return
         if not category or len(category) > 100:
             self._store.mark_event(event_id, EventStatus.RETRY_REQUESTED, "INVALID_CATEGORY")
-            await self._notifier.send(chat_id, "Please reply with a short expense category, for example `Food Supplies`.")
+            await self._notifier.send(chat_id, "Please reply with `CATEGORY Food Supplies`, replacing Food Supplies with your category.")
             return
 
         try:
@@ -241,7 +241,7 @@ class ReceiptPipeline:
     async def _send_pending_prompt(self, chat_id: int, pending: PendingReceipt) -> None:
         vendor = escape_markdown(pending.vendor_name)
         if pending.status != ReceiptStatus.NEEDS_REVIEW:
-            await self._notifier.send(chat_id, f"Please finish the category for *{vendor}* before sending another receipt. Reply with an expense category.")
+            await self._notifier.send(chat_id, f"Please finish the category for *{vendor}* before sending another receipt. Reply `CATEGORY Dining` (replace Dining with your category).")
             return
         reasons = (pending.review_reason or '').split(',')
         reason_text = '\n'.join(REASON_LABELS.get(reason, 'Please check the extracted values.') for reason in reasons)
@@ -272,7 +272,7 @@ class ReceiptPipeline:
                 override = parse_confirmation(message)
                 confirmed = self._store.confirm_review(pending.user_id, pending.receipt_id, override)
                 if confirmed.status == ReceiptStatus.PENDING_CATEGORY:
-                    await self._notifier.send(chat_id, f'✅ Receipt details confirmed.\n\nWhich expense category should I assign to *{escape_markdown(confirmed.vendor_name)}*?')
+                    await self._notifier.send(chat_id, f'✅ Receipt details confirmed.\n\nWhich expense category should I assign to *{escape_markdown(confirmed.vendor_name)}*? Reply `CATEGORY Dining` (replace Dining with your category).')
                 else:
                     extraction = ReceiptExtraction(
                         Vendor_Name=confirmed.vendor_name, Date=confirmed.receipt_date,
