@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.audit import receipt_values, record_event
 from app.db import Receipt, User
 from app.pipeline import DuplicateReceiptError, normalize_vendor
 from app.review import today
@@ -119,9 +120,11 @@ def correct_receipt(session_factory, user_id, correction):
         if duplicate is not None:
             raise DuplicateReceiptError('This correction would duplicate another receipt.')
         column = {'vendor': 'vendor_name', 'date': 'receipt_date', 'total': 'total_amount', 'category': 'category'}[correction.field]
+        before = receipt_values(row)
         setattr(row, column, value)
         row.vendor_normalized = vendor
         row.updated_at = datetime.now(timezone.utc)
+        record_event(session, row, 'CORRECTED', before)
         try:
             session.commit()
         except IntegrityError as error:

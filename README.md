@@ -377,3 +377,49 @@ Before pushing, run the full disposable PostgreSQL suite. After Render deploys,
 ask “How much did I spend in September 2026?” and compare with `/summary 2026-09`.
 Test a question while a receipt awaits a category, then resolve it with CATEGORY.
 No Supabase migrations should be rerun.
+
+
+## Phase 8: receipt audit history
+
+Use `/history <receipt-id>` (copy an ID from `/receipts`) to see the newest five
+history entries. Use `/history <receipt-id> 2` for the next page. History is scoped
+to the Telegram chat owner and can be viewed without resolving pending receipts.
+Times are displayed in UTC. History is not sent to the conversational model.
+
+The new `receipt_events` table records CREATED, REVIEW_CONFIRMED,
+CATEGORY_ASSIGNED and CORRECTED. Creation captures the starting receipt fields;
+subsequent entries contain only changed fields with old and new values. Dates use
+ISO strings and amounts use decimal strings. Image paths, signed links, credentials
+and provider payloads are excluded. Each event is inserted in the same transaction
+as its receipt change; if either fails, both roll back. Existing owner locks
+serialize changes so concurrent corrections retain a coherent before/after chain.
+Re-saving an unchanged value creates no correction entry. Failed validation,
+duplicates, and failed transactions create no history entry.
+
+Existing receipts are not backfilled: unknown past changes are not reconstructed.
+They begin accumulating audit entries with their next actual application change.
+This is application-maintained history, not a tamper-proof database ledger:
+manual SQL edits outside the application are not captured. The existing RETRY
+operation still removes an unconfirmed draft; its history is removed by the
+composite receipt/owner foreign key's ON DELETE CASCADE. Completed receipts are
+not deleted by RETRY.
+
+### Phase 8 deployment order
+
+1. Run the full disposable PostgreSQL test suite before deployment.
+2. Back up the live database. In Supabase SQL Editor, run
+   `migrations/005_receipt_audit.sql` once, after migration 004, under the existing
+   table-owning migration role. Do not rerun migrations 001–004.
+3. Confirm success, then push/deploy the new backend on Render. Do not deploy the
+   audit-writing backend before migration 005 exists.
+4. Use `/history <receipt-id>` to inspect a receipt. Existing receipts initially
+   have no history. Make an intentional correction with `/edit` and verify its
+   old/new values in `/history`. Repeating the same value should add no entry.
+
+Migration 005 only adds a table, constraints and index; it changes no existing
+receipt values and performs no backfill. Foreign-key creation can briefly lock
+receipts; the migration has a 5-second lock timeout and a 60-second statement
+timeout and rolls back on error. RLS is enabled with no client policies. Backend
+access uses the existing privileged direct database role; anon/authenticated API
+clients are not given history access. If the application is rolled back, leave
+the additive history table in place to preserve its data.

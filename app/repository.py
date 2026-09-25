@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.audit import receipt_values, record_event, receipt_history
 from app.expenses import ExpenseQueries
 from app.corrections import recent_receipts, correct_receipt
 from app.db import PendingConversation, ProcessingAttempt, Receipt, User, UserVendorMemory, WebhookEvent
@@ -41,6 +42,9 @@ class SqlAlchemyReceiptStore:
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
         self.expenses = ExpenseQueries(session_factory)
+
+    def receipt_history(self, user_id, receipt_id, page=1):
+        return receipt_history(self._session_factory, user_id, receipt_id, page)
 
     def recent_receipts(self, user_id: UUID):
         return recent_receipts(self._session_factory, user_id)
@@ -180,6 +184,7 @@ class SqlAlchemyReceiptStore:
             session.add(receipt)
             try:
                 session.flush()
+                record_event(session, receipt, 'CREATED')
                 if draft.status in (ReceiptStatus.PENDING_CATEGORY, ReceiptStatus.NEEDS_REVIEW):
                     session.add(PendingConversation(user_id=draft.user_id, chat_id=draft.chat_id, receipt_id=receipt.id))
                 if draft.status in (ReceiptStatus.PENDING_CATEGORY, ReceiptStatus.NEEDS_REVIEW, ReceiptStatus.COMPLETED):
@@ -260,6 +265,7 @@ class SqlAlchemyReceiptStore:
                 raise LookupError("Receipt was not found for this user.")
             if receipt.status != ReceiptStatus.PENDING_CATEGORY:
                 raise LookupError("This receipt requires review before assigning its category.")
+            before = receipt_values(receipt)
             receipt.category = category
             receipt.status = ReceiptStatus.COMPLETED
             receipt.completed_at = datetime.now(timezone.utc)
@@ -277,6 +283,7 @@ class SqlAlchemyReceiptStore:
                 memory.display_name = receipt.vendor_name
                 memory.category = category
 
+            record_event(session, receipt, 'CATEGORY_ASSIGNED', before)
             original_event = session.get(WebhookEvent, receipt.event_id)
             if original_event is not None:
                 _set_event_status(original_event, EventStatus.COMPLETED)
@@ -310,6 +317,7 @@ class SqlAlchemyReceiptStore:
             if duplicate is not None:
                 raise DuplicateReceiptError("The confirmed date matches an existing receipt.")
             event = session.get(WebhookEvent, receipt.event_id)
+            before = receipt_values(receipt)
             receipt.receipt_date = confirmed_date
             receipt.review_reason = None
             receipt.updated_at = datetime.now(timezone.utc)
@@ -319,6 +327,7 @@ class SqlAlchemyReceiptStore:
                 pending.status = PendingStatus.RESOLVED
                 pending.resolved_at = receipt.updated_at
             _set_event_status(event, receipt.status)
+            record_event(session, receipt, 'REVIEW_CONFIRMED', before)
             try:
                 session.commit()
             except IntegrityError as exc:

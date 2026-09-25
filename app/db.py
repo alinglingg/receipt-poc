@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Numeric, String, Text, UniqueConstraint, create_engine, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, create_engine, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 from app.config import get_settings
@@ -152,6 +152,24 @@ class ProcessingAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     event: Mapped[WebhookEvent] = relationship(back_populates="attempts")
+
+
+class ReceiptEvent(Base):
+    __tablename__ = "receipt_events"
+    __table_args__ = (
+        ForeignKeyConstraint(["receipt_id", "user_id"], ["receipts.id", "receipts.user_id"],
+                             name="receipt_events_receipt_user_fkey", ondelete="CASCADE"),
+        CheckConstraint("event_type IN ('CREATED', 'CATEGORY_ASSIGNED', 'REVIEW_CONFIRMED', 'CORRECTED')",
+                        name="receipt_events_valid_type"),
+        Index("receipt_events_owner_receipt_time", "user_id", "receipt_id", "created_at", "id"),
+    )
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    receipt_id: Mapped[UUID] = mapped_column(nullable=False)
+    user_id: Mapped[UUID] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    old_value: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
+    new_value: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 def create_session_factory():

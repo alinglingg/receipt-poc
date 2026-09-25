@@ -1,4 +1,5 @@
 """Handle deterministic receipt commands before category/review replies."""
+from uuid import UUID
 from app.corrections import HELP, parse_edit
 from app.expense_commands import COMMANDS, HELP as EXPENSE_HELP, expense_response
 from app.pipeline import DuplicateReceiptError
@@ -24,7 +25,17 @@ async def process_command(store, notifier, *, event_id, chat_id, text):
     try:
         user_id = store.get_or_create_user(chat_id)
         if text.lower() in {'/help', '/start'}:
-            response = HELP + "\n\n" + EXPENSE_HELP + '\n\nYou can also ask: How much did I spend this month?\nFor pending categories, reply CATEGORY Dining (or your chosen category).'
+            response = 'View changes: `/history <receipt-id>`\n\n' + HELP + "\n\n" + EXPENSE_HELP + '\n\nYou can also ask: How much did I spend this month?\nFor pending categories, reply CATEGORY Dining (or your chosen category).'
+        elif text.split()[0].lower() == '/history':
+            parts = text.split()
+            if len(parts) not in (2, 3):
+                raise ValueError('Use /history <receipt-id> [page].')
+            try:
+                receipt_id = UUID(parts[1])
+                page = int(parts[2]) if len(parts) == 3 else 1
+            except ValueError:
+                raise ValueError('Use /history <receipt-id> [page], copying the complete ID from /receipts.') from None
+            response = store.receipt_history(user_id, receipt_id, page)
         elif text.split()[0].lower() in COMMANDS:
             response = expense_response(store.expenses, user_id, text, format_receipt)
         elif text.lower() == '/receipts':
