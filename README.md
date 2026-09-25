@@ -241,3 +241,40 @@ completion timestamp, confirmation completes or changes to `PENDING_CATEGORY`, a
 category assignment completes the receipt. Check a duplicate image and low-confidence
 image too. Automated tests use fake Vision/Telegram/Storage clients; no live API
 calls are made. PostgreSQL migration and concurrency tests require TEST_DATABASE_URL.
+
+
+## Phase 5: correct a saved receipt in Telegram
+
+Send `/receipts` to list your latest 10 completed receipts and their full IDs.
+Copy the ID of the receipt you want to change into one of these commands:
+
+```text
+/edit <receipt-id> total 450.00
+/edit <receipt-id> date 2026-09-10
+/edit <receipt-id> vendor Starbucks
+/edit <receipt-id> category Transportation
+```
+
+Replace `<receipt-id>` with the complete ID shown by the bot. Send `/help` for
+examples. Dates accept YYYY-MM-DD or explicit DD/MM/YYYY (22/09/2026); short
+ambiguous dates such as 9/10/26 are rejected. Totals must be positive, no more
+than two decimal places, and at least the recorded VAT. Future dates are rejected.
+Vendor/category values are limited to 200/100 characters.
+
+Commands target only receipts belonging to the Telegram chat. Corrections lock the
+owner and check the existing duplicate rule before committing. They update
+`updated_at`, preserve `completed_at`, the image and extraction evidence, and send
+a confirmation with the saved values. The original extraction confidence is
+preserved; this is not an AI re-extraction. Vendor and category corrections affect
+only this receipt, leaving learned categories for future receipts unchanged.
+
+Finish any review/category flow for the target receipt first. During review,
+`CONFIRM YYYY-MM-DD` still handles date confirmation and `RETRY` discards the
+unconfirmed draft. Slash commands, including malformed ones, cannot become
+category names. Other completed receipts can be edited while a draft is pending.
+
+No new migration is needed after migration 004. Run the tests (including the
+disposable PostgreSQL suite) before deploying this backend through Render. Smoke
+test `/receipts`, correct one saved receipt, verify the response and `updated_at`,
+and restore the original value if testing with real data. Do not rerun migrations
+001–004. Correction audit history is reserved for the later audit phase.

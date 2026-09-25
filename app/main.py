@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, status
 
+from app.commands import process_command
 from app.config import Settings, get_settings
 from app.db import create_session_factory
 from app.pipeline import ReceiptPipeline
@@ -108,7 +109,10 @@ async def _process_event(services: WebhookServices, update: TelegramUpdate, even
             image_bytes = await services.telegram.download_photo(update.file_id)
             await services.pipeline.process_photo(event_id=event_id, chat_id=update.chat_id, image_bytes=image_bytes)
         elif update.kind == "text" and update.text is not None:
-            await services.pipeline.process_category_reply(event_id=event_id, chat_id=update.chat_id, category=update.text)
+            handled = await process_command(services.store, services.telegram,
+                                            event_id=event_id, chat_id=update.chat_id, text=update.text)
+            if not handled:
+                await services.pipeline.process_category_reply(event_id=event_id, chat_id=update.chat_id, category=update.text)
         else:
             services.store.mark_event(event_id, EventStatus.COMPLETED)
             await services.telegram.send(update.chat_id, "Please send a receipt image, or reply with a category when asked.")
