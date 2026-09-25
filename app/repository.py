@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.expenses import ExpenseQueries
 from app.corrections import recent_receipts, correct_receipt
 from app.db import PendingConversation, ProcessingAttempt, Receipt, User, UserVendorMemory, WebhookEvent
 from app.pipeline import DuplicateReceiptError, PendingReceiptError, PendingReceipt, ReceiptDraft
@@ -39,6 +40,7 @@ class SqlAlchemyReceiptStore:
 
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
+        self.expenses = ExpenseQueries(session_factory)
 
     def recent_receipts(self, user_id: UUID):
         return recent_receipts(self._session_factory, user_id)

@@ -1,5 +1,6 @@
 """Handle deterministic receipt commands before category/review replies."""
 from app.corrections import HELP, parse_edit
+from app.expense_commands import COMMANDS, HELP as EXPENSE_HELP, expense_response
 from app.pipeline import DuplicateReceiptError
 from app.review import escape_markdown
 from app.statuses import EventStatus
@@ -23,7 +24,9 @@ async def process_command(store, notifier, *, event_id, chat_id, text):
     try:
         user_id = store.get_or_create_user(chat_id)
         if text.lower() in {'/help', '/start'}:
-            response = HELP
+            response = HELP + "\n\n" + EXPENSE_HELP
+        elif text.split()[0].lower() in COMMANDS:
+            response = expense_response(store.expenses, user_id, text, format_receipt)
         elif text.lower() == '/receipts':
             receipts = store.recent_receipts(user_id)
             response = ('Recent saved receipts:\n\n' + '\n\n'.join(map(format_receipt, receipts))

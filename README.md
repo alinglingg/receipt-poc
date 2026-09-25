@@ -278,3 +278,50 @@ disposable PostgreSQL suite) before deploying this backend through Render. Smoke
 test `/receipts`, correct one saved receipt, verify the response and `updated_at`,
 and restore the original value if testing with real data. Do not rerun migrations
 001–004. Correction audit history is reserved for the later audit phase.
+
+
+## Phase 6: expense queries
+
+Telegram supports these deterministic, read-only commands:
+
+```text
+/summary 2026-09
+/categories 2026-09
+/category 2026-09 Dining
+/largest
+/largest 2026-09
+/search Keigo
+/receipt <receipt-id>
+/compare 2026-08 2026-09
+```
+
+`/summary` returns a receipt count and total. `/categories` groups by stored
+category, and `/category` filters by a case-insensitive exact category name
+(including names containing spaces). `/largest` returns up to five receipts,
+across all dates unless a month is supplied. `/search` matches a literal,
+case-insensitive vendor substring and returns up to ten matches ordered by
+receipt date, newest first. `%` and `_` are literal characters, not wildcards.
+`/receipt` retrieves one owned completed receipt by its full ID.
+
+All commands use **completed receipts only**, scoped to the Telegram chat's user.
+The reporting date is `receipt_date`, not upload or completion time. Month ranges
+include the first day and exclude the next month's first day. Totals come from
+SQL SUM/COUNT over stored decimal amounts; no model calculates them. The current
+schema has no currency field, so totals assume receipts use the same currency;
+there is no currency conversion. Empty months return zero. Month comparison is
+second month minus first; percentage change is N/A when the first total is zero.
+These are totals of recorded receipts, not a claim to include all spending.
+
+The `ExpenseQueries` service in `app/expenses.py` exposes search, single-receipt,
+monthly/category summary, largest-expense and comparison tools without Telegram
+or an LLM. Search supports optional inclusive start / exclusive end date filters,
+category/vendor filters, limit (1–50) and offset for pagination. Ranking ties use
+receipt date then ID for stable ordering. Queries reflect corrected fields
+immediately. Existing validated correction functions remain the write tools.
+
+Query commands never resolve pending category/review conversations. Natural-language
+questions are reserved for Phase 7; use the explicit commands above for now.
+No schema migration or new environment variable is required. Validate with the
+full disposable PostgreSQL suite, push the phase commit, and deploy the latest
+commit on Render. Smoke-test `/summary 2026-09` and `/categories 2026-09`, checking
+against the completed receipt dates/amounts in `/receipts`. Do not rerun migrations.
