@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,8 +58,30 @@ def build_services(settings: Settings) -> WebhookServices | None:
                            assistant=ExpenseAssistant(settings.openai_api_key.get_secret_value(), settings.openai_model))
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Resume unfinished photos at startup and release recovery tasks at shutdown."""
+    tasks: set[asyncio.Task] = set()
+    try:
+        services: WebhookServices | None = app.state.services
+        if services is not None:
+            for event in services.store.unfinished_photo_events():
+                if event.file_id:
+                    update = TelegramUpdate(event.update_id, event.chat_id, "photo", event.file_id)
+                    task = asyncio.create_task(_process_event(services, update, event.id))
+                    tasks.add(task)
+                    task.add_done_callback(tasks.discard)
+        yield
+    finally:
+        remaining = list(tasks)
+        for task in remaining:
+            task.cancel()
+        if remaining:
+            await asyncio.gather(*remaining, return_exceptions=True)
+
+
 def create_app(services: WebhookServices | None = None) -> FastAPI:
-    app = FastAPI(title="Receipt POC", version="0.1.0")
+    app = FastAPI(title="Receipt POC", version="0.1.0", lifespan=lifespan)
     app.state.services = services if services is not None else build_services(get_settings())
 
     @app.get("/health")
@@ -91,16 +114,6 @@ def create_app(services: WebhookServices | None = None) -> FastAPI:
             return {"accepted": True}
         background_tasks.add_task(_process_event, services, update, event.id)
         return {"accepted": True}
-
-    @app.on_event("startup")
-    async def recover_unfinished_receipts() -> None:
-        services: WebhookServices | None = app.state.services
-        if services is None:
-            return
-        for event in services.store.unfinished_photo_events():
-            if event.file_id:
-                update = TelegramUpdate(event.update_id, event.chat_id, "photo", event.file_id)
-                asyncio.create_task(_process_event(services, update, event.id))
 
     return app
 
