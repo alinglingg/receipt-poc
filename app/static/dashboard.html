@@ -3,8 +3,27 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>Receipt — Expense workspace</title><link rel="stylesheet" href="/dashboard/assets/dashboard.css"><script src="/dashboard/assets/dashboard.js" defer></script></head>
 <body>
 <section id="login" class="login-wrap">
- <div class="login-art"><div class="brand"><span class="logo">r.</span> receipt</div><div><span class="eyebrow">LESS PAPERWORK. MORE CLARITY.</span><h1>Your receipts.<br>A clearer picture.</h1><p>A quiet place to understand your spending, check the details, and keep everything together.</p></div><span class="art-foot">Captured in Telegram. Organized here.</span></div>
- <div class="login-form"><span class="eyebrow">YOUR EXPENSE WORKSPACE</span><h2>Welcome back.</h2><p id="login-message">Sign in securely through your Telegram bot. No new password to remember.</p><ol class="steps"><li>Open your private chat with the receipt bot.</li><li>Send <code>/dashboard</code>.</li><li>Open the one-time link it sends you.</li></ol><button id="retry-session" class="primary">Check my session</button><p class="muted small">Links expire after 10 minutes. Keep yours private.</p></div>
+ <div class="login-art">
+  <div class="brand"><span class="logo">r.</span> receipt</div>
+  <div class="login-story"><span class="eyebrow">LESS PAPERWORK. MORE CLARITY.</span><h1>Your receipts.<br>A clearer picture.</h1><p>Send a photo. Keep the details. See where your money goes.</p>
+   <div class="login-preview" aria-label="Example dashboard using fictional data">
+    <div class="preview-heading"><span>September at a glance</span><span class="badge">Sample data</span></div>
+    <strong class="preview-total">2,450.00</strong><p>3 receipts · organized by category</p>
+    <div class="preview-row"><span>Groceries</span><strong>1,650.00</strong></div><progress max="2450" value="1650" aria-label="Sample groceries: 1650"></progress>
+    <div class="preview-row"><span>Dining</span><strong>800.00</strong></div><progress max="2450" value="800" aria-label="Sample dining: 800"></progress>
+   </div>
+  </div>
+  <span class="art-foot">Captured in Telegram. Organized here.</span>
+ </div>
+ <div class="login-form">
+  <span class="eyebrow">YOUR EXPENSE WORKSPACE</span><h2>Sign in to your workspace</h2>
+  <p id="login-message" role="status">Use your Telegram bot to sign in. No new password to remember.</p>
+  <a id="open-telegram" class="primary action-link" target="_blank" rel="noopener noreferrer" hidden>Open Telegram bot ↗</a>
+  <ol class="steps"><li>Open your private chat with the receipt bot.</li><li>Send <code>/dashboard</code> <button id="copy-command" class="text-button" type="button">Copy command</button></li><li>Open the sign-in link in this browser.</li></ol>
+  <p id="copy-status" class="small" role="status"></p>
+  <div class="signin-timing"><strong>A short link. A longer session.</strong><p>Your sign-in link works once and expires in 10 minutes. After signing in, this browser stays connected for 24 hours.</p></div>
+  <div class="login-secondary"><a href="/dashboard/demo">View demo with sample data →</a><button id="retry-session" class="text-button">Already signed in? Try again</button></div>
+ </div>
 </section>
 <div id="workspace" class="workspace" hidden>
  <aside class="sidebar"><div class="brand"><span class="logo">r.</span> receipt</div><span class="side-label">WORKSPACE</span><nav aria-label="Main navigation"><button data-view="overview" class="active"><span>◈</span> Overview</button><button data-view="receipts"><span>▤</span> Receipts</button><button data-view="review"><span>◉</span> Review queue</button><button data-view="vendors"><span>⌑</span> Vendors</button></nav><div class="sidebar-bottom"><div class="connection"><span class="dot"></span> Connected to Telegram</div><p>Your receipts, all in one place.</p><button id="logout">Sign out ↗</button></div></aside>

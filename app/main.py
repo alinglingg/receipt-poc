@@ -29,6 +29,7 @@ class WebhookServices:
     assistant: ExpenseAssistant | None = None
     storage: SupabaseStorage | None = None
     dashboard_url: str = ""
+    telegram_bot_username: str = ""
 
 
 def build_services(settings: Settings) -> WebhookServices | None:
@@ -60,7 +61,8 @@ def build_services(settings: Settings) -> WebhookServices | None:
     )
     return WebhookServices(store=SqlAlchemyReceiptStore(create_session_factory()), pipeline=pipeline, telegram=telegram,
                            assistant=ExpenseAssistant(settings.openai_api_key.get_secret_value(), settings.openai_model),
-                           storage=storage, dashboard_url=dashboard_origin(settings.dashboard_url))
+                           storage=storage, dashboard_url=dashboard_origin(settings.dashboard_url),
+                           telegram_bot_username=settings.telegram_bot_username)
 
 
 @asynccontextmanager

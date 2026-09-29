@@ -549,3 +549,18 @@ No Supabase credentials or storage paths are exposed to browser code. Only posit
 Existing environment variables and hosting remain unchanged. Rolling back the
 application may leave migration 007 in place. Automated tests use synthetic data
 and fake storage responses, with PostgreSQL migration and concurrent login tests.
+
+
+### Sign-in page and public demo
+
+Set `TELEGRAM_BOT_USERNAME` in Render to the bot's public username without `@`
+(for example `ExampleReceiptBot`) to show the Open Telegram bot button. This is
+public configuration, not the bot token. Without it, the manual sign-in steps
+remain available. The page also offers a copyable `/dashboard` command, explains
+the 10-minute link and 24-hour browser session, and treats a signed-out visit as
+a normal state. Expired or used sign-in links still display their error.
+
+`/dashboard/demo` is a public read-only preview containing hard-coded fictional
+receipts. It does not query the database, load receipt photos, create a session,
+or relax authentication for any private API. It may be shared with GitHub visitors.
+No migration or new dependency is needed for these sign-in improvements.

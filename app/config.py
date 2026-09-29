@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     app_env: str = Field(default="development", alias="APP_ENV")
     dashboard_url: str = Field(default="", alias="DASHBOARD_URL")
+    telegram_bot_username: str = Field(default="", alias="TELEGRAM_BOT_USERNAME", pattern=r"^(?:[A-Za-z][A-Za-z0-9_]{4,31})?$")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     database_url: str = Field(default="", alias="DATABASE_URL")
 

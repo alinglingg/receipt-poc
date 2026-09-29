@@ -220,3 +220,23 @@ def test_category_filter_applies_before_pagination(store):
     assert len(second['items']) == 2 and not second['has_more']
     assert all(r['category'] == 'Dining' for r in first['items'] + second['items'])
     assert not ({r['id'] for r in first['items']} & {r['id'] for r in second['items']})
+
+
+@pytest.mark.asyncio
+async def test_public_signin_config_and_demo_do_not_expose_private_data(web, store):
+    app, services = web
+    saved(store, vendor_name='PRIVATE VENDOR DO NOT EXPOSE')
+    services.telegram_bot_username = 'SampleReceiptBot'
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
+        response = await client.get('/api/dashboard/public-config')
+        assert response.json() == {'telegram_url':'https://t.me/SampleReceiptBot'}
+        services.telegram_bot_username = ''
+        assert (await client.get('/api/dashboard/public-config')).json() == {'telegram_url':None}
+        demo = await client.get('/dashboard/demo')
+        assert demo.status_code == 200
+        assert 'Fictional receipts' in demo.text and 'Sample Market' in demo.text
+        assert 'PRIVATE VENDOR' not in demo.text
+        assert (await client.get('/api/dashboard/receipts')).status_code == 401
+        shell = await client.get('/dashboard/')
+        assert 'Open Telegram bot' in shell.text and 'Copy command' in shell.text
+        assert '24 hours' in shell.text and 'View demo with sample data' in shell.text

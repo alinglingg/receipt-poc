@@ -94,6 +94,16 @@ def install_dashboard(app):
     def shell():
         return FileResponse(STATIC / 'dashboard.html')
 
+    @app.get('/dashboard/demo', include_in_schema=False)
+    def demo():
+        return FileResponse(STATIC / 'demo.html')
+
+    @app.get('/api/dashboard/public-config', include_in_schema=False)
+    def public_config(request: Request):
+        svc = request.app.state.services
+        username = svc.telegram_bot_username if svc else ''
+        return {'telegram_url': f'https://t.me/{username}' if username else None}
+
     @app.get('/dashboard/assets/{name}', include_in_schema=False)
     def asset(name: str):
         if name not in {'dashboard.css', 'dashboard.js'}:
