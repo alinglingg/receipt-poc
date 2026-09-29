@@ -1,6 +1,6 @@
 # Receipt POC
 
-Telegram receipt-processing proof of concept for the Full Stack Automation and AI Developer assessment.
+An AI-powered receipt and expense tracker that turns Telegram receipt photos into organized records, with learned vendor categories, spending reports, CSV exports, and a private web dashboard.
 
 ## What it does
 
