@@ -18,7 +18,7 @@ def format_receipt(receipt):
     )
 
 
-async def process_command(store, notifier, *, event_id, chat_id, text):
+async def process_command(store, notifier, *, event_id, chat_id, text, dashboard_url=""):
     text = text.strip()
     if not text.startswith('/'):
         return False
@@ -27,7 +27,14 @@ async def process_command(store, notifier, *, event_id, chat_id, text):
         user_id = store.get_or_create_user(chat_id)
         if text.lower() in {'/help', '/start'}:
             response = 'View changes: `/history <receipt-id>`\n\n' + HELP + "\n\n" + EXPENSE_HELP + '\n\nYou can also ask: How much did I spend this month?\nFor pending categories, reply CATEGORY Dining (or your chosen category).'
-            response += '\n\n' + VENDOR_HELP + '\n\nExport CSV: `/export YYYY-MM` or `/export all`.'
+            response += '\n\nOpen the web dashboard: /dashboard\n\n' + VENDOR_HELP + '\n\nExport CSV: `/export YYYY-MM` or `/export all`.'
+        elif text.split()[0].lower() == '/dashboard':
+            if text.lower() != '/dashboard':
+                raise ValueError('Send /dashboard without any arguments.')
+            if not dashboard_url:
+                raise ValueError('The web dashboard is not configured yet.')
+            token = store.dashboard.issue_login(user_id)
+            response = f'[Open your dashboard]({dashboard_url}/dashboard/#token={token})\n\nThis private sign-in link expires in 10 minutes and works once. Do not share it.'
         elif text.split()[0].lower() == '/export':
             parts = text.split()
             if len(parts) != 2:

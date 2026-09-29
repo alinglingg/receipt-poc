@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.audit import receipt_values, record_event, receipt_history
 from app.vendors import VendorAliases
+from app.dashboard_store import DashboardStore
 from app.exports import export_receipts
 from app.expenses import ExpenseQueries
 from app.corrections import recent_receipts, correct_receipt
@@ -45,6 +46,7 @@ class SqlAlchemyReceiptStore:
         self._session_factory = session_factory
         self.expenses = ExpenseQueries(session_factory)
         self.vendors = VendorAliases(session_factory)
+        self.dashboard = DashboardStore(session_factory)
 
     def export_receipts(self, user_id, period):
         return export_receipts(self._session_factory, user_id, period)

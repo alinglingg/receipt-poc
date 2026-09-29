@@ -509,3 +509,43 @@ Run the full disposable PostgreSQL suite, push, and wait for Render deployment.
 Smoke-test `/export 2026-09`: open the attachment in Excel or Google Sheets and
 compare its row count and total with `/summary 2026-09`. Also test `/export all`.
 Automated tests use fake Telegram HTTP responses and never send real documents.
+
+
+## Phase 11: Private web dashboard
+
+The existing FastAPI service serves `/dashboard/`; no separate frontend build or
+host is required. In a private Telegram chat, send `/dashboard` and open the
+one-time sign-in link within 10 minutes. Browser sessions last 24 hours; Sign out
+revokes that session. A new link invalidates earlier unused links, but does not
+revoke other signed-in browsers. Treat sign-in links as passwords.
+
+Views include monthly spending and category totals, paginated receipts with vendor
+and status filters, audited corrections, receipt images, change history, review
+confirmation/category assignment, learned vendors, alternate-name management, and
+monthly CSV downloads. Existing repository validation and ownership checks apply.
+Review drafts remain excluded from totals. Dashboard changes are visible through
+Telegram commands, but do not send unsolicited Telegram notifications.
+
+Login/session tokens are stored only as SHA-256 hashes. Login tokens travel in the
+URL fragment, which is removed before exchanging them. Sessions use Secure,
+HttpOnly, SameSite=Strict cookies. POST requests require the configured Origin.
+Responses disable caching; receipt images use existing 15-minute signed links.
+No Supabase credentials or storage paths are exposed to browser code. Only positive
+(private) Telegram chat IDs may request dashboard sign-in.
+
+### Phase 11 deployment order
+
+1. Run the full disposable PostgreSQL test suite.
+2. Apply `migrations/007_web_dashboard.sql` once after 006 in Supabase. It adds
+   only the backend token table with RLS and no client policies; existing receipts
+   and category memory remain unchanged. Do not rerun earlier migrations.
+3. Set Render `DASHBOARD_URL` to the exact HTTPS origin of this backend, such as
+   `https://your-service.onrender.com` (no path, query, or fragment). Leaving it
+   empty disables sign-in and the dashboard API.
+4. Push/deploy the backend, then send `/dashboard` in your private bot chat.
+5. Compare September 2026 totals with `/summary 2026-09`, open a receipt, make and
+   restore a test category correction, inspect its history, export CSV, and sign out.
+
+Existing environment variables and hosting remain unchanged. Rolling back the
+application may leave migration 007 in place. Automated tests use synthetic data
+and fake storage responses, with PostgreSQL migration and concurrent login tests.

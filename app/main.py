@@ -10,6 +10,8 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, st
 from app.assistant import ExpenseAssistant, process_assistant_text
 from app.commands import process_command
 from app.config import Settings, get_settings
+from app.dashboard_api import install_dashboard
+from app.dashboard_store import dashboard_origin
 from app.db import create_session_factory
 from app.pipeline import ReceiptPipeline
 from app.statuses import EventStatus
@@ -25,6 +27,8 @@ class WebhookServices:
     pipeline: ReceiptPipeline
     telegram: TelegramBot
     assistant: ExpenseAssistant | None = None
+    storage: SupabaseStorage | None = None
+    dashboard_url: str = ""
 
 
 def build_services(settings: Settings) -> WebhookServices | None:
@@ -55,7 +59,8 @@ def build_services(settings: Settings) -> WebhookServices | None:
         notifier=telegram,
     )
     return WebhookServices(store=SqlAlchemyReceiptStore(create_session_factory()), pipeline=pipeline, telegram=telegram,
-                           assistant=ExpenseAssistant(settings.openai_api_key.get_secret_value(), settings.openai_model))
+                           assistant=ExpenseAssistant(settings.openai_api_key.get_secret_value(), settings.openai_model),
+                           storage=storage, dashboard_url=dashboard_origin(settings.dashboard_url))
 
 
 @asynccontextmanager
@@ -115,6 +120,7 @@ def create_app(services: WebhookServices | None = None) -> FastAPI:
         background_tasks.add_task(_process_event, services, update, event.id)
         return {"accepted": True}
 
+    install_dashboard(app)
     return app
 
 
@@ -126,7 +132,7 @@ async def _process_event(services: WebhookServices, update: TelegramUpdate, even
             await services.pipeline.process_photo(event_id=event_id, chat_id=update.chat_id, image_bytes=image_bytes)
         elif update.kind == "text" and update.text is not None:
             handled = await process_command(services.store, services.telegram,
-                                            event_id=event_id, chat_id=update.chat_id, text=update.text)
+                                            event_id=event_id, chat_id=update.chat_id, text=update.text, dashboard_url=services.dashboard_url)
             if not handled and services.assistant is not None:
                 await process_assistant_text(services, event_id=event_id, chat_id=update.chat_id, text=update.text)
             elif not handled:
