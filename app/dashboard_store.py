@@ -82,7 +82,7 @@ class DashboardStore:
             session.execute(delete(BrowserToken).where(BrowserToken.token_hash == digest(token), BrowserToken.kind == 'SESSION'))
             session.commit()
 
-    def receipts(self, user_id, month=None, vendor=None, status=None, page=1):
+    def receipts(self, user_id, month=None, vendor=None, status=None, page=1, category=None):
         if not 1 <= page <= 10000:
             raise ValueError('Invalid page.')
         filters = [Receipt.user_id == user_id]
@@ -92,6 +92,8 @@ class DashboardStore:
         if vendor:
             value = text_filter(vendor, 200).replace('/', '//').replace('%', '/%').replace('_', '/_')
             filters.append(Receipt.vendor_name.ilike('%' + value + '%', escape='/'))
+        if category is not None:
+            filters.append(Receipt.category == text_filter(category, 100))
         if status:
             if status not in RECEIPT_STATUSES:
                 raise ValueError('Unknown receipt status.')
@@ -99,7 +101,10 @@ class DashboardStore:
         with self._sessions() as session:
             rows = list(session.scalars(select(Receipt).where(*filters).order_by(
                 Receipt.receipt_date.desc(), Receipt.id.desc()).offset((page - 1) * 20).limit(21)))
-            return dict(items=[receipt_data(row) for row in rows[:20]], has_more=len(rows) > 20)
+            categories = list(session.scalars(select(Receipt.category).where(
+                Receipt.user_id == user_id, Receipt.category.is_not(None), Receipt.category != ""
+            ).distinct().order_by(Receipt.category)))
+            return dict(items=[receipt_data(row) for row in rows[:20]], has_more=len(rows) > 20, categories=categories)
 
     def receipt(self, user_id, receipt_id, image=False):
         with self._sessions() as session:

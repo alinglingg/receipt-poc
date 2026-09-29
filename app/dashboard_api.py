@@ -132,8 +132,8 @@ def install_dashboard(app):
 
     @router.get('/receipts')
     def receipts(month: str | None = None, vendor: str | None = None, status: str | None = None,
-                 page: int = 1, user=Depends(identity), svc=Depends(services)):
-        return svc.store.dashboard.receipts(user, month, vendor, status, page)
+                 page: int = 1, category: str | None = None, user=Depends(identity), svc=Depends(services)):
+        return svc.store.dashboard.receipts(user, month, vendor, status, page, category=category)
 
     @router.get('/receipts/{receipt_id}')
     def receipt(receipt_id: UUID, user=Depends(identity), svc=Depends(services)):

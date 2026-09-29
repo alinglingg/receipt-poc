@@ -188,3 +188,35 @@ async def test_cross_origin_edit_cannot_change_receipt(web, store):
         assert response.status_code == 403
         receipt = (await client.get(f'/api/dashboard/receipts/{receipt_id}')).json()
         assert receipt['total'] == '125.50'
+
+
+@pytest.mark.asyncio
+async def test_category_filter_combines_filters_and_scopes_options(web, store):
+    from datetime import date
+    app, _ = web
+    user, dining = saved(store, category='Dining', vendor_name='Keigo', vendor_normalized='KEIGO')
+    saved(store, update=2, category='Pet Care', vendor_normalized='VET')
+    saved(store, update=3, category='Dining', vendor_normalized='OLD', receipt_date=date(2026, 8, 10))
+    saved(store, update=4, category='Private category', chat=99)
+    saved(store, update=5, category='Dining out', vendor_normalized='OTHER')
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN, cookies=session_cookie(store,user)) as client:
+        response = await client.get('/api/dashboard/receipts', params={'category':'Dining','month':'2026-09','vendor':'Keigo','status':'COMPLETED'})
+        assert response.status_code == 200
+        assert [r['id'] for r in response.json()['items']] == [str(dining)]
+        assert response.json()['categories'] == ['Dining', 'Dining out', 'Pet Care']
+        assert (await client.get('/api/dashboard/receipts',params={'category':'Private category'})).json()['items'] == []
+        assert (await client.get('/api/dashboard/receipts',params={'category':'%'})).json()['items'] == []
+        assert len((await client.get('/api/dashboard/receipts',params={'month':'2026-09'})).json()['items']) == 3
+        assert (await client.get('/api/dashboard/receipts',params={'category':'x'*101})).status_code == 400
+
+
+def test_category_filter_applies_before_pagination(store):
+    for update in range(1, 23):
+        user, _ = saved(store, update=update, category='Dining', vendor_normalized=f'VENDOR{update}')
+    saved(store, update=23, category='Pet Care', vendor_normalized='VET')
+    first = store.dashboard.receipts(user, category='Dining')
+    second = store.dashboard.receipts(user, category='Dining', page=2)
+    assert len(first['items']) == 20 and first['has_more']
+    assert len(second['items']) == 2 and not second['has_more']
+    assert all(r['category'] == 'Dining' for r in first['items'] + second['items'])
+    assert not ({r['id'] for r in first['items']} & {r['id'] for r in second['items']})

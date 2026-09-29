@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {view:'overview', month:'', page:1, vendor:'', status:'', generation:0};
+const state = {view:'overview', month:'', page:1, vendor:'', status:'', category:'', generation:0};
 const titles = {overview:['Your month, at a glance.','A clear view of the receipts you’ve recorded.'], receipts:['Every receipt, in one place.','Find the details, make a correction, or revisit the original.'], review:['A second look, when it matters.','Confirm the details before a receipt joins your spending totals.'], vendors:['Familiar names. Fewer questions.','Manage the vendor names and categories your bot has learned.']};
 const money = value => Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const readableDate = value => new Date(value+'T00:00:00Z').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});
@@ -16,7 +16,60 @@ function pill(status){return el('span','badge '+(status==='COMPLETED'?'completed
 function receiptTable(items,compact=false){if(!items.length)return empty('No receipts here yet.','Send a photo to your Telegram bot, or try another month or filter.');const wrap=el('div',compact?'table-wrap compact-table':'table-wrap'),table=el('table'),head=el('thead'),tr=el('tr');(compact?['Vendor','Total','']:['Vendor','Date','Category','Total','Status','']).forEach(x=>tr.append(el('th','',x)));head.append(tr);table.append(head);const body=el('tbody');for(const r of items){const row=el('tr'),vendor=el('td','vendor-cell',r.vendor);vendor.title=r.vendor;row.append(vendor);if(!compact)row.append(el('td','muted',readableDate(r.date)),el('td','',r.category||'Unassigned'));row.append(el('td','amount',money(r.total)));const status=el('td');status.append(pill(r.status));const action=el('td');action.append(button('Open ↗',()=>openReceipt(r.id),'text-button'));if(!compact)row.append(status);row.append(action);body.append(row);}table.append(body);wrap.append(table);return wrap;}
 function pager(container,more){const box=el('div','pager'),prev=button('← Previous',async()=>{state.page--;await load();}),next=button('Next →',async()=>{state.page++;await load();});prev.disabled=state.page===1;next.disabled=!more;box.append(prev,el('span','',`Page ${state.page}`),next);container.append(box);}
 async function overview(){const [summary,recent]=await Promise.all([api('/summary?month='+state.month),api('/receipts?month='+state.month+'&status=COMPLETED')]);const result=el('div'),stats=el('div','stats');const values=[['Total recorded',money(summary.total),'Completed receipts this month'],['Receipts',String(summary.count),'Recorded and ready'],['Average receipt',money(summary.average),'Per completed receipt'],['Awaiting review',String(summary.pending),'Across all receipt dates']];for(const [label,value,note]of values){const item=el('div','stat');item.append(el('div','stat-label',label),el('div','stat-value',value),el('div','stat-note',note));stats.append(item);}result.append(stats);const columns=el('div','two-col'),recentCard=card('Recent receipts','Your latest completed receipts in this month');recentCard.append(receiptTable(recent.items.slice(0,5),true));const side=card('Where it went','Spending by saved category'),body=el('div','card-body');if(!summary.categories.length)body.append(empty('A fresh start.','Your category breakdown will appear here.'));for(const c of summary.categories){const row=el('div','category-row'),info=el('div','category-info'),progress=el('progress');progress.max=Number(summary.total)||1;progress.value=Number(c.total);progress.setAttribute('aria-label',`${c.name}: ${money(c.total)}`);info.append(el('span','',c.name),el('strong','',money(c.total)));row.append(info,progress);body.append(row);}const callout=el('div','callout');callout.append(el('h3','',summary.pending?'A little attention goes a long way.':'All caught up.'),el('p','',summary.pending?'Check receipts that need a confirmed date or category. They stay out of totals until completed.':'No receipts are waiting for review. Send your next receipt to Telegram whenever you’re ready.'),button('Go to review queue →',()=>navigate('review'),'text-button'));body.append(callout);side.append(body);columns.append(recentCard,side);result.append(columns);return result;}
-async function receiptsView(){const query=new URLSearchParams({month:state.month,page:state.page});if(state.vendor)query.set('vendor',state.vendor);if(state.status)query.set('status',state.status);const data=await api('/receipts?'+query),box=card('Receipt library','Filtered by receipt date. Open a receipt to see its image and history.'),form=el('form','filters'),search=el('input'),status=el('select');search.placeholder='Search a vendor…';search.value=state.vendor;search.maxLength=200;search.setAttribute('aria-label','Search vendor');for(const [value,label]of [['','All statuses'],['COMPLETED','Completed'],['NEEDS_REVIEW','Needs review'],['PENDING_CATEGORY','Needs category'],['FAILED','Failed']]){const opt=el('option','',label);opt.value=value;status.append(opt);}status.value=state.status;const l1=el('label','', 'Vendor'),l2=el('label','','Status');l1.append(search);l2.append(status);const submit=el('button','', 'Apply filters');submit.type='submit';form.append(l1,l2,submit);form.addEventListener('submit',event=>{event.preventDefault();run(submit,async()=>{state.vendor=search.value;state.status=status.value;state.page=1;await load();});});box.append(form,receiptTable(data.items));pager(box,data.has_more);return box;}
+async function receiptsView() {
+  const query = new URLSearchParams({month: state.month, page: state.page});
+  if (state.vendor) query.set('vendor', state.vendor);
+  if (state.status) query.set('status', state.status);
+  if (state.category) query.set('category', state.category);
+  const data = await api('/receipts?' + query);
+  const box = card('Receipt library', 'Filtered by receipt date. Open a receipt to see its image and history.');
+  const form = el('form', 'filters');
+  const search = el('input'), status = el('select'), category = el('select');
+  search.placeholder = 'Search a vendor…';
+  search.value = state.vendor;
+  search.maxLength = 200;
+  search.setAttribute('aria-label', 'Search vendor');
+  for (const [value, label] of [['', 'All statuses'], ['COMPLETED', 'Completed'], ['NEEDS_REVIEW', 'Needs review'], ['PENDING_CATEGORY', 'Needs category'], ['FAILED', 'Failed']]) {
+    const opt = el('option', '', label);
+    opt.value = value;
+    status.append(opt);
+  }
+  status.value = state.status;
+  const all = el('option', '', 'All categories');
+  all.value = '';
+  category.append(all);
+  const categories = [...data.categories];
+  // Keep a selected category visible after its last receipt is corrected.
+  if (state.category && !categories.includes(state.category)) categories.push(state.category);
+  for (const name of categories) {
+    const opt = el('option', '', name);
+    opt.value = name;
+    category.append(opt);
+  }
+  category.value = state.category;
+  const vendorLabel = el('label', '', 'Vendor');
+  const categoryLabel = el('label', '', 'Category');
+  const statusLabel = el('label', '', 'Status');
+  vendorLabel.append(search);
+  categoryLabel.append(category);
+  statusLabel.append(status);
+  const submit = el('button', '', 'Apply filters');
+  submit.type = 'submit';
+  form.append(vendorLabel, categoryLabel, statusLabel, submit);
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    run(submit, async () => {
+      state.vendor = search.value;
+      state.category = category.value;
+      state.status = status.value;
+      state.page = 1;
+      await load();
+    });
+  });
+  box.append(form, receiptTable(data.items));
+  pager(box, data.has_more);
+  return box;
+}
 async function reviewView(){const data=await api('/review'),box=card('Review queue','Finish a review here or continue in Telegram.');if(!data.items.length)box.append(empty('You’re all caught up.','Receipts that need your input will appear here.'));for(const r of data.items){const row=el('div','review-card'),text=el('div');text.append(pill(r.status),el('h3','',r.vendor),el('p','',`${readableDate(r.date)} · ${money(r.total)} · ${r.category||'Category needed'}`));row.append(text,button('Review receipt →',()=>openReceipt(r.id),'primary'));box.append(row);}return box;}
 async function vendorsView(){const data=await api('/vendors?page='+state.page),group=el('div'),columns=el('div','two-col'),box=card('Learned vendors','Categories used for future receipts');if(!data.items.length)box.append(empty('No learned vendors yet.','Assign a category to a receipt in Telegram to get started.'));for(const v of data.items){const row=el('div','alias-row');row.append(el('strong','',v.name),el('span','',v.category));box.append(row);}const aliases=card('Alternate names','Explicit links, without fuzzy matching');for(const a of data.aliases){const row=el('div','alias-row'),copy=el('div');copy.append(el('strong','',a.name),el('p','small',`Linked to ${a.target}`));row.append(copy,button('Remove',async()=>{if(!confirm(`Remove the alias “${a.name}”? Saved receipts will stay unchanged.`))return;await api('/aliases',{action:'remove',name:a.name});await load();notice('Alias removed.');},'text-button'));aliases.append(row);}if(!data.aliases.length)aliases.append(empty('No aliases on this page.','Link an alternate spelling to a learned vendor below.'));columns.append(box,aliases);group.append(columns);const add=card('Link an alternate name','Future receipts with this exact name will use the target’s learned category.'),form=el('form','alias-form'),name=el('input'),target=el('select'),l1=el('label','','Alternate name'),l2=el('label','','Learned vendor');name.placeholder='e.g. Starbucks #1234';name.required=true;name.maxLength=200;const placeholder=el('option','','Choose a vendor');placeholder.value='';target.append(placeholder);target.required=true;for(const v of data.items){const opt=el('option','',v.name);opt.value=v.name;target.append(opt);}l1.append(name);l2.append(target);const submit=el('button','primary','Save alias');submit.type='submit';submit.disabled=!data.items.length;form.append(l1,l2,submit);form.addEventListener('submit',e=>{e.preventDefault();run(submit,async()=>{await api('/aliases',{action:'add',name:name.value,target:target.value});await load();notice('Alias saved. Existing receipts are unchanged.');});});add.append(form);group.append(add);pager(group,data.has_more);return group;}
 async function load(){const generation=++state.generation;$('content').replaceChildren(el('div','loading','Loading your workspace…'));try{const node=await ({overview,receipts:receiptsView,review:reviewView,vendors:vendorsView}[state.view])();if(generation===state.generation)$('content').replaceChildren(node);}catch(error){if(generation===state.generation){$('content').replaceChildren(empty('Couldn’t load this view.','Check your connection and try again.'));$('content').append(button('Try again',load));problem(error);}}}

@@ -519,7 +519,7 @@ one-time sign-in link within 10 minutes. Browser sessions last 24 hours; Sign ou
 revokes that session. A new link invalidates earlier unused links, but does not
 revoke other signed-in browsers. Treat sign-in links as passwords.
 
-Views include monthly spending and category totals, paginated receipts with vendor
+Views include monthly spending and category totals, paginated receipts with vendor, category,
 and status filters, audited corrections, receipt images, change history, review
 confirmation/category assignment, learned vendors, alternate-name management, and
 monthly CSV downloads. Existing repository validation and ownership checks apply.
