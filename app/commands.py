@@ -27,7 +27,18 @@ async def process_command(store, notifier, *, event_id, chat_id, text):
         user_id = store.get_or_create_user(chat_id)
         if text.lower() in {'/help', '/start'}:
             response = 'View changes: `/history <receipt-id>`\n\n' + HELP + "\n\n" + EXPENSE_HELP + '\n\nYou can also ask: How much did I spend this month?\nFor pending categories, reply CATEGORY Dining (or your chosen category).'
-            response += '\n\n' + VENDOR_HELP
+            response += '\n\n' + VENDOR_HELP + '\n\nExport CSV: `/export YYYY-MM` or `/export all`.'
+        elif text.split()[0].lower() == '/export':
+            parts = text.split()
+            if len(parts) != 2:
+                raise ValueError('Use /export YYYY-MM or /export all.')
+            export = store.export_receipts(user_id, parts[1].lower())
+            if export.count:
+                await notifier.send_document(chat_id, filename=export.filename, content=export.content,
+                    caption=f'{export.count} completed receipts — {parts[1].lower()}. Dates are receipt dates; blank VAT means not shown.')
+                store.mark_event(event_id, EventStatus.COMPLETED)
+                return True
+            response = 'No completed receipts found for this period. No CSV was sent.'
         elif text.split()[0].lower() in VENDOR_COMMANDS:
             response = vendor_response(store.vendors, user_id, text)
         elif text.split()[0].lower() == '/history':

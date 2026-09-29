@@ -475,3 +475,37 @@ and remove the test link with `/unalias`. Automated pipeline tests verify that
 matching new receipts inherit the target category while keeping their original
 vendor names and image-duplicate protection. Leave the additive table in place if
 rolling back the application.
+
+
+## Phase 10: CSV export in Telegram
+
+Send `/export 2026-09` to download September 2026, or `/export all` for all dates.
+The bot sends a CSV document to the requesting chat, containing only that chat's
+completed receipts. Columns are date, vendor, category, total, VAT, and status.
+Rows are ordered by receipt date then ID; month boundaries include the first day
+and exclude the next month's first day. No pending/failed/review receipts appear.
+Exports reflect current corrections and original vendor names, without merging
+aliases. No model is called and pending conversations are not resolved.
+
+CSV uses UTF-8 with BOM for Excel, ISO dates, two decimal places, quoted fields,
+and blank VAT when not shown (zero VAT remains 0.00). Category/vendor text with a
+spreadsheet formula prefix is prefixed with an apostrophe to keep it as text;
+CSV quoting preserves commas, quotes and embedded newlines. That protective
+apostrophe may be visible in some importers. No credentials, image links, storage
+paths, chat IDs, or user IDs are exported. Existing single-currency assumptions
+apply; there is no currency conversion.
+
+Files are generated in memory and uploaded directly through Telegram sendDocument,
+not written to disk or Supabase. The attachment remains available in the Telegram
+chat under normal Telegram behavior; it is not an expiring receipt-image link.
+An empty selection sends a message instead of an attachment. Each export is bounded
+to 10,000 receipts and 5 MiB. Larger selections are rejected with guidance to
+export one month; they are never silently truncated. Upload errors are recorded
+as failures without storing provider payloads or claiming successful delivery.
+Send the command again to retry a failed export.
+
+No migration, package installation, or new environment variable is required.
+Run the full disposable PostgreSQL suite, push, and wait for Render deployment.
+Smoke-test `/export 2026-09`: open the attachment in Excel or Google Sheets and
+compare its row count and total with `/summary 2026-09`. Also test `/export all`.
+Automated tests use fake Telegram HTTP responses and never send real documents.
