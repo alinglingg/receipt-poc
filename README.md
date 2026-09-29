@@ -2,6 +2,30 @@
 
 An AI-powered receipt and expense tracker that turns Telegram receipt photos into organized records, with learned vendor categories, spending reports, CSV exports, and a private web dashboard.
 
+## Screenshots
+
+Actual browser captures of the app, using fictional sample data only. No private
+receipt photos, sign-in tokens, or personal expense records are included.
+
+[Explore the public demo](https://receipt-poc.onrender.com/dashboard/demo)
+
+### Telegram sign-in
+
+Open the bot, copy `/dashboard`, and use its one-time link to sign in.
+
+![Telegram sign-in page with sample spending preview](docs/screenshots/sign-in.jpg)
+
+### Dashboard preview
+
+Monthly totals, category breakdowns, and receipt records shown with fictional data.
+The public demo is read-only; the private workspace requires authentication.
+
+![Dashboard demo with monthly totals, categories, and fictional receipts](docs/screenshots/dashboard-demo.jpg)
+
+### Sample receipt records
+
+![Fictional receipt list showing dates, categories, totals, and completion status](docs/screenshots/sample-receipts.jpg)
+
 ## What it does
 
 1. Receives Telegram images through a verified webhook.
