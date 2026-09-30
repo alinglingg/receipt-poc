@@ -1,5 +1,6 @@
 """Handle deterministic receipt commands before category/review replies."""
 from uuid import UUID
+from app.categories import category_list_message
 from app.vendors import COMMANDS as VENDOR_COMMANDS, HELP as VENDOR_HELP, vendor_response
 from app.corrections import HELP, parse_edit
 from app.expense_commands import COMMANDS, HELP as EXPENSE_HELP, expense_response
@@ -27,7 +28,11 @@ async def process_command(store, notifier, *, event_id, chat_id, text, dashboard
         user_id = store.get_or_create_user(chat_id)
         if text.lower() in {'/help', '/start'}:
             response = 'View changes: `/history <receipt-id>`\n\n' + HELP + "\n\n" + EXPENSE_HELP + '\n\nYou can also ask: How much did I spend this month?\nFor pending categories, reply CATEGORY Dining (or your chosen category).'
-            response += '\n\nOpen the web dashboard: /dashboard\n\n' + VENDOR_HELP + '\n\nExport CSV: `/export YYYY-MM` or `/export all`.'
+            response += '\n\nCategory suggestions: /categorylist\nOpen the web dashboard: /dashboard\n\n' + VENDOR_HELP + '\n\nExport CSV: `/export YYYY-MM` or `/export all`.'
+        elif text.split()[0].lower() == '/categorylist':
+            if text.lower() != '/categorylist':
+                raise ValueError('Send /categorylist without arguments.')
+            response = category_list_message()
         elif text.split()[0].lower() == '/dashboard':
             if text.lower() != '/dashboard':
                 raise ValueError('Send /dashboard without any arguments.')

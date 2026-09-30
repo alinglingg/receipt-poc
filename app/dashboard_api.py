@@ -140,6 +140,10 @@ def install_dashboard(app):
                 'categories': [{'name': name or 'Unassigned', 'count': item.count, 'total': str(item.total)} for name, item in categories],
                 'pending': len(svc.store.dashboard.pending(user))}
 
+    @router.get('/category-options')
+    def category_options(user=Depends(identity), svc=Depends(services)):
+        return {'categories': svc.store.dashboard.category_options(user)}
+
     @router.get('/receipts')
     def receipts(month: str | None = None, vendor: str | None = None, status: str | None = None,
                  page: int = 1, category: str | None = None, user=Depends(identity), svc=Depends(services)):

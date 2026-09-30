@@ -588,3 +588,17 @@ a normal state. Expired or used sign-in links still display their error.
 receipts. It does not query the database, load receipt photos, create a session,
 or relax authentication for any private API. It may be shared with GitHub visitors.
 No migration or new dependency is needed for these sign-in improvements.
+
+
+### Preset expense categories
+
+Send `/categorylist` in Telegram to see 17 suggested categories: Groceries, Dining,
+Transportation, Utilities, Housing, Health, Pet Care, Shopping, Household,
+Entertainment, Travel, Education, Work, Subscriptions, Personal Care,
+Gifts & Donations, and Other. The dashboard receipt filter includes these even
+before any receipts use them. Category assignment and correction fields offer
+these suggestions alongside your existing custom categories. Custom names remain
+allowed; existing receipts and learned vendor categories are not rewritten.
+Selecting an unused category returns an empty receipt list. Category suggestions
+do not change spending totals or create placeholder receipts. Photo captions do
+not assign categories in this release. No migration or configuration is required.

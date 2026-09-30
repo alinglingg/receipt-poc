@@ -203,7 +203,8 @@ async def test_category_filter_combines_filters_and_scopes_options(web, store):
         response = await client.get('/api/dashboard/receipts', params={'category':'Dining','month':'2026-09','vendor':'Keigo','status':'COMPLETED'})
         assert response.status_code == 200
         assert [r['id'] for r in response.json()['items']] == [str(dining)]
-        assert response.json()['categories'] == ['Dining', 'Dining out', 'Pet Care']
+        from app.categories import category_choices
+        assert response.json()['categories'] == category_choices(['Dining', 'Dining out', 'Pet Care'])
         assert (await client.get('/api/dashboard/receipts',params={'category':'Private category'})).json()['items'] == []
         assert (await client.get('/api/dashboard/receipts',params={'category':'%'})).json()['items'] == []
         assert len((await client.get('/api/dashboard/receipts',params={'month':'2026-09'})).json()['items']) == 3
@@ -240,3 +241,31 @@ async def test_public_signin_config_and_demo_do_not_expose_private_data(web, sto
         shell = await client.get('/dashboard/')
         assert 'Open Telegram bot' in shell.text and 'Copy command' in shell.text
         assert '24 hours' in shell.text and 'View demo with sample data' in shell.text
+
+
+@pytest.mark.asyncio
+async def test_presets_available_before_receipts_and_keep_custom_categories(web, store):
+    from app.categories import PRESET_CATEGORIES
+    app, _ = web
+    user = store.get_or_create_user(42)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN, cookies=session_cookie(store,user)) as client:
+        options = (await client.get('/api/dashboard/category-options')).json()['categories']
+        assert len(options) == 17 and set(options) == set(PRESET_CATEGORIES)
+        assert (await client.get('/api/dashboard/receipts?category=Travel')).json()['items'] == []
+        saved(store, category='My custom category')
+        saved(store, update=2, chat=99, category='Another user category')
+        options = (await client.get('/api/dashboard/category-options')).json()['categories']
+        assert 'My custom category' in options and 'Another user category' not in options
+
+
+@pytest.mark.asyncio
+async def test_categorylist_does_not_resolve_pending_receipt(store):
+    from app.commands import process_command
+    from app.categories import PRESET_CATEGORIES
+    user, receipt_id = saved(store, category=None, status='PENDING_CATEGORY')
+    event = store.create_webhook_event(update_id=2,chat_id=42,kind='text')
+    notifier = NS(send=AsyncMock())
+    await process_command(store,notifier,event_id=event.id,chat_id=42,text='/categorylist')
+    message = notifier.send.call_args.args[1]
+    assert all(name in message for name in PRESET_CATEGORIES)
+    assert store.dashboard.receipt(user,receipt_id)['status'] == 'PENDING_CATEGORY'

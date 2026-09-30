@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import delete, select, func
 
+from app.categories import category_choices
 from app.db import BrowserToken, User, Receipt, UserVendorMemory, VendorAlias
 from app.expenses import month_bounds, text_filter
 from app.statuses import RECEIPT_STATUSES
@@ -104,7 +105,12 @@ class DashboardStore:
             categories = list(session.scalars(select(Receipt.category).where(
                 Receipt.user_id == user_id, Receipt.category.is_not(None), Receipt.category != ""
             ).distinct().order_by(Receipt.category)))
-            return dict(items=[receipt_data(row) for row in rows[:20]], has_more=len(rows) > 20, categories=categories)
+            return dict(items=[receipt_data(row) for row in rows[:20]], has_more=len(rows) > 20, categories=category_choices(categories))
+
+    def category_options(self, user_id):
+        with self._sessions() as session:
+            saved = session.scalars(select(Receipt.category).where(Receipt.user_id == user_id).distinct())
+            return category_choices(saved)
 
     def receipt(self, user_id, receipt_id, image=False):
         with self._sessions() as session:
