@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
+from app.categories import category_suggestion
 from app.imaging import InvalidReceiptImage, prepare_receipt_image
 from app.storage import StorageError
 from app.statuses import EventStatus, ReceiptStatus
@@ -41,6 +42,7 @@ class ReceiptDraft:
     raw_date_text: str | None = None
     review_reason: str | None = None
     failure_reason: str | None = None
+    suggested_category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,7 @@ class PendingReceipt:
     status: str = ReceiptStatus.PENDING_CATEGORY
     review_reason: str | None = None
     raw_date_text: str | None = None
+    suggested_category: str | None = None
 
 
 class ReceiptStore(Protocol):
@@ -160,6 +163,7 @@ class ReceiptPipeline:
                     total_amount=extraction.total_amount,
                     vat_amount=extraction.vat_amount,
                     category=category,
+                    suggested_category=category_suggestion(extraction.category) if not category else None,
                     confidence=extraction.confidence_score.value,
                     status=receipt_status,
                     review_reason=",".join(reasons) or None,
@@ -195,7 +199,7 @@ class ReceiptPipeline:
             if reasons:
                 await self._send_pending_prompt(chat_id, pending)
             else:
-                await self._notifier.send(chat_id, f"❓ *Unrecognized vendor:* {escape_markdown(extraction.vendor_name)}\n\nWhich expense category should I assign this to? Reply `CATEGORY Dining` (replace Dining with your category).")
+                await self._notifier.send(chat_id, self._category_prompt(pending))
             return
 
         await self._send_summary(chat_id, extraction, category, image_path)
@@ -238,10 +242,21 @@ class ReceiptPipeline:
         )
         await self._send_summary(chat_id, extraction, category, pending.image_path)
 
+    @staticmethod
+    def _category_prompt(pending: PendingReceipt) -> str:
+        suggestion = category_suggestion(pending.suggested_category or '')
+        intro = f'❓ *Unrecognized vendor:* {escape_markdown(pending.vendor_name)}\n\n'
+        if suggestion:
+            intro += f'Suggested category: *{escape_markdown(suggestion)}* (not saved yet).\n'
+            intro += f'Reply `CATEGORY {suggestion}` to accept, or `CATEGORY Your category` to choose another.'
+        else:
+            intro += 'Which expense category should I assign? Reply `CATEGORY Dining` (replace Dining with your category).'
+        return intro + '\nSend /categorylist for choices. Please finish this receipt before sending another.'
+
     async def _send_pending_prompt(self, chat_id: int, pending: PendingReceipt) -> None:
         vendor = escape_markdown(pending.vendor_name)
         if pending.status != ReceiptStatus.NEEDS_REVIEW:
-            await self._notifier.send(chat_id, f"Please finish the category for *{vendor}* before sending another receipt. Reply `CATEGORY Dining` (replace Dining with your category).")
+            await self._notifier.send(chat_id, self._category_prompt(pending))
             return
         reasons = (pending.review_reason or '').split(',')
         reason_text = '\n'.join(REASON_LABELS.get(reason, 'Please check the extracted values.') for reason in reasons)
@@ -272,7 +287,7 @@ class ReceiptPipeline:
                 override = parse_confirmation(message)
                 confirmed = self._store.confirm_review(pending.user_id, pending.receipt_id, override)
                 if confirmed.status == ReceiptStatus.PENDING_CATEGORY:
-                    await self._notifier.send(chat_id, f'✅ Receipt details confirmed.\n\nWhich expense category should I assign to *{escape_markdown(confirmed.vendor_name)}*? Reply `CATEGORY Dining` (replace Dining with your category).')
+                    await self._notifier.send(chat_id, '✅ Receipt details confirmed.\n\n' + self._category_prompt(confirmed))
                 else:
                     extraction = ReceiptExtraction(
                         Vendor_Name=confirmed.vendor_name, Date=confirmed.receipt_date,

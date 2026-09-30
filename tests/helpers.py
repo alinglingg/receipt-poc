@@ -87,6 +87,7 @@ class FakeStore:
                 status=draft.status,
                 review_reason=draft.review_reason,
                 raw_date_text=draft.raw_date_text,
+                suggested_category=draft.suggested_category,
             )
 
         self.mark_event(draft.event_id, draft.status)

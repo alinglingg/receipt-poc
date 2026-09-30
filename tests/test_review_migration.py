@@ -19,6 +19,8 @@ def migrate_review(connection):
     connection.execute((MIGRATIONS/'004_receipt_review.sql').read_text())
     connection.execute((MIGRATIONS/'005_receipt_audit.sql').read_text())
     connection.execute((MIGRATIONS/'006_vendor_aliases.sql').read_text())
+    connection.execute((MIGRATIONS/'007_web_dashboard.sql').read_text())
+    connection.execute((MIGRATIONS/'008_category_suggestions.sql').read_text())
 
 
 def test_review_migration_preserves_receipts_and_pending_categories(legacy_connection,postgres_schema):
@@ -35,6 +37,8 @@ def test_review_migration_preserves_receipts_and_pending_categories(legacy_conne
     # Runtime repository requires the current additive audit schema.
     legacy_connection.execute((MIGRATIONS/'005_receipt_audit.sql').read_text())
     legacy_connection.execute((MIGRATIONS/'006_vendor_aliases.sql').read_text())
+    legacy_connection.execute((MIGRATIONS/'007_web_dashboard.sql').read_text())
+    legacy_connection.execute((MIGRATIONS/'008_category_suggestions.sql').read_text())
     store=SqlAlchemyReceiptStore(sessionmaker(bind=postgres_schema,expire_on_commit=False))
     user=store.get_or_create_user(42)
     store.resolve_category(user,receipt,'Dining')

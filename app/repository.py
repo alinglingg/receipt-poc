@@ -184,6 +184,7 @@ class SqlAlchemyReceiptStore:
                 image_path=draft.image_path,
                 image_sha256=draft.image_sha256,
                 raw_date_text=draft.raw_date_text,
+                suggested_category=draft.suggested_category,
                 review_reason=draft.review_reason,
                 failure_reason=draft.failure_reason,
                 processing_started_at=event.processing_started_at,
@@ -252,6 +253,7 @@ class SqlAlchemyReceiptStore:
                 status=receipt.status,
                 review_reason=receipt.review_reason,
                 raw_date_text=receipt.raw_date_text,
+                suggested_category=receipt.suggested_category,
             )
 
     def resolve_category(self, user_id: UUID, receipt_id: UUID, category: str) -> None:
@@ -348,7 +350,8 @@ class SqlAlchemyReceiptStore:
             return PendingReceipt(receipt.id, receipt.user_id, receipt.vendor_name,
                                   receipt.vendor_normalized, receipt.receipt_date, receipt.total_amount,
                                   receipt.vat_amount, receipt.confidence, receipt.image_path,
-                                  receipt.category, receipt.status, receipt.review_reason, receipt.raw_date_text)
+                                  receipt.category, receipt.status, receipt.review_reason,
+                                  suggested_category=receipt.suggested_category, raw_date_text=receipt.raw_date_text)
 
     def retry_review(self, user_id: UUID, receipt_id: UUID) -> None:
         """Explicit RETRY discards only the caller's unconfirmed review draft."""

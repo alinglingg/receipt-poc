@@ -602,3 +602,20 @@ allowed; existing receipts and learned vendor categories are not rewritten.
 Selecting an unused category returns an empty receipt list. Category suggestions
 do not change spending totals or create placeholder receipts. Photo captions do
 not assign categories in this release. No migration or configuration is required.
+
+
+### Receipt-based category suggestions
+
+For an unfamiliar vendor, the existing receipt extraction selects one of the preset
+categories using the vendor and purchased items. Telegram offers it after any receipt
+detail review. Reply `CATEGORY Groceries` to accept the suggestion, or supply another
+preset or custom category. Unsupported model categories fall back to asking you to choose.
+Suggestions remain separate from confirmed categories and never automatically teach
+vendor memory or complete a receipt. Known vendor categories take precedence.
+There is no additional model request or new environment variable.
+
+**Deployment:** run the full test suite, then apply
+`migrations/008_category_suggestions.sql` once after migration 007, before deploying
+this backend. Existing receipts retain their values; their suggestion is NULL.
+Do not rerun earlier migrations. The additive column can remain when rolling back
+application code. Photo captions still do not assign categories.

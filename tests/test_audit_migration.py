@@ -21,6 +21,8 @@ def test_additive_migration_preserves_data_and_enables_rls(legacy_connection, po
     assert c.execute('SELECT to_jsonb(r) FROM receipts r').fetchall() == before
     assert c.execute('SELECT count(*) FROM receipt_events').fetchone()[0] == 0
     assert c.execute("SELECT relrowsecurity FROM pg_class WHERE oid='receipt_events'::regclass").fetchone()[0]
+    for name in ('006_vendor_aliases.sql', '007_web_dashboard.sql', '008_category_suggestions.sql'):
+        c.execute((MIGRATIONS / name).read_text())
     store = SqlAlchemyReceiptStore(sessionmaker(bind=postgres_schema, expire_on_commit=False))
     user = store.get_or_create_user(42)
     store.correct_receipt(user, Correction(receipt_id, 'category', 'Dining'))
